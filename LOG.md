@@ -10,3 +10,4 @@ Today was generally working on the infrastructure surrounding the system, prepar
   - Wrote custom system prompts for the LLMs in the system.
 - Added model registry.
 - Implemented logging.
+- Add dummy models to view testing and data flow through a 

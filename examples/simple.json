@@ -6,19 +6,19 @@
   "workflow": [
     {
       "step_id": "derive",
-      "model_id": "strong_physics_model",
+      "model_id": 2,
       "instruction": "Derive the first-order perturbative correction carefully.",
       "access_list": ["question"]
     },
     {
       "step_id": "verify_constants",
-      "model_id": "math_verifier",
+      "model_id": 1,
       "instruction": "Check expectation values, dimensions, and numerical factors.",
       "access_list": ["question", "derive"]
     },
     {
       "step_id": "final",
-      "model_id": "answer_synthesizer",
+      "model_id": 0,
       "instruction": "Produce the final answer using only verified claims.",
       "access_list": ["question", "derive", "verify_constants"]
     }

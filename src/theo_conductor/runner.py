@@ -1,8 +1,8 @@
 import asyncio
 
-from scheduler import topological_sort
-from schema import Task, RunResult, StepOutput, Step
-from models.registry import ModelRegistry
+from .scheduler import topological_sort
+from .schema import Task, RunResult, StepOutput, Step
+from .models.registry import ModelRegistry
 
 
 class Runner:

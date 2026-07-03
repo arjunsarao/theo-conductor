@@ -1,7 +1,7 @@
 """
 Schedules steps in a task based on their dependencies DAG.
 """
-from task import Task, Step
+from .schema import Task, Step
 from collections import deque
 
 RESERVED_CONTEXT_KEYS = {"question", "system_prompt", "tool_docs"}

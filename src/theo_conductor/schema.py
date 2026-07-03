@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from typing import Any, Dict, List, Set, Protocol
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 class Difficulty(Enum):
@@ -14,10 +14,10 @@ class Difficulty(Enum):
 
 class Step(BaseModel):
     step_id: str
-    model_id: str
+    model_id: int | str = Field(validation_alias=AliasChoices("model_id", "model_idx"))
     instruction: str
     access_list: List[str] = Field(default_factory=list)
-    needs_tools: bool
+    needs_tools: bool = False
     depends_on: Set[str] = Field(default_factory=set)
 
 
@@ -40,9 +40,9 @@ class Task(BaseModel):
 
 class StepOutput(BaseModel):
     step_id: str
-    model_id: str
+    model_id: int | str
     text: str
-    usage: int | None = None
+    usage: dict[str, Any] | None = None
     latency_ms: float | None = None
 
 
@@ -68,13 +68,13 @@ class ModelClient(Protocol):
 class ModelSpec:
     client: ModelClient
 
-    provider: str
-    display_name: str
+    provider: str = ""
+    display_name: str | None = None
+    model_idx: int | str | None = None
+    name: str | None = None
     context_length: int | None = None
     supports_tools: bool = False
     supports_json: bool = False
     cost_per_1m_input_tokens: float | None = None
     cost_per_1m_output_tokens: float | None = None
-    tags: Set[str] = Field(default_factory=set)
-
-
+    tags: Set[str] = field(default_factory=set)
