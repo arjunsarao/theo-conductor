@@ -1,0 +1,17 @@
+[project]
+name = "theo-conductor"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "huggingface>=0.0.1",
+    "huggingface-hub>=1.21.0",
+    "numpy>=2.5.0",
+    "torch>=2.12.1",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

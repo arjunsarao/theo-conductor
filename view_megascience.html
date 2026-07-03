@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MegaScience Physics Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        header {
+            margin-bottom: 30px;
+        }
+        h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        input[type="file"], input[type="number"], button {
+            padding: 8px 12px;
+            font-size: 14px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: white;
+            cursor: pointer;
+        }
+        button {
+            background: #0066cc;
+            color: white;
+            border-color: #0066cc;
+        }
+        button:hover {
+            background: #0052a3;
+        }
+        input[type="number"] {
+            width: 80px;
+        }
+        .info {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+        .records {
+            display: grid;
+            gap: 15px;
+        }
+        .record {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .record-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        .record-id {
+            font-weight: bold;
+            color: #0066cc;
+            font-size: 13px;
+        }
+        .record-number {
+            font-size: 12px;
+            color: #999;
+        }
+        .record-content {
+            font-size: 13px;
+            line-height: 1.6;
+            color: #333;
+            word-break: break-word;
+        }
+        .field {
+            margin-bottom: 8px;
+        }
+        .field-label {
+            font-weight: 600;
+            color: #555;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .field-value {
+            margin-top: 3px;
+            color: #333;
+            padding-left: 10px;
+            border-left: 3px solid #e0e0e0;
+        }
+        .markdown-field {
+            margin-top: 3px;
+            padding-left: 10px;
+            border-left: 3px solid #0066cc;
+        }
+        .markdown-field h1, .markdown-field h2, .markdown-field h3, .markdown-field h4, .markdown-field h5, .markdown-field h6 {
+            font-size: 0.95em;
+            font-weight: 600;
+            margin-top: 5px;
+            margin-bottom: 3px;
+        }
+        .markdown-field p {
+            margin: 0 0 5px 0;
+        }
+        .markdown-field code {
+            background: #f0f0f0;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+        .markdown-field pre {
+            background: #f5f5f5;
+            padding: 8px;
+            border-radius: 3px;
+            overflow-x: auto;
+            margin: 5px 0;
+        }
+        .markdown-field ul, .markdown-field ol {
+            margin-left: 20px;
+            margin-top: 5px;
+            margin-bottom: 5px;
+        }
+        .markdown-field li {
+            margin-bottom: 3px;
+        }
+        .error {
+            background: #fee;
+            color: #c00;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .empty {
+            text-align: center;
+            color: #999;
+            padding: 40px 20px;
+        }
+        .pagination {
+            margin-top: 20px;
+            text-align: center;
+            font-size: 12px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>MegaScience Physics Viewer</h1>
+            <div class="controls">
+                <input type="file" id="fileInput" accept=".jsonl" />
+                <button onclick="loadFile()">Load JSONL</button>
+                <input type="number" id="perPage" value="10" min="1" max="100" />
+                <button onclick="changePage(currentPage - 1)">← Prev</button>
+                <button onclick="changePage(currentPage + 1)">Next →</button>
+            </div>
+            <div class="info" id="info"></div>
+        </header>
+        <div id="error"></div>
+        <div id="records" class="records"></div>
+        <div class="pagination" id="pagination"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script>
+        let data = [];
+        let currentPage = 0;
+        let perPage = 10;
+
+        const markdownFields = ['question', 'answer', 'q', 'a', 'prompt', 'response', 'content', 'text'];
+
+        function isMarkdownField(key) {
+            return markdownFields.includes(key.toLowerCase());
+        }
+
+        function renderField(key, value) {
+            const displayValue = typeof value === 'string' ? value : JSON.stringify(value);
+            
+            if (isMarkdownField(key) && typeof value === 'string') {
+                const htmlContent = marked.parse(displayValue);
+                return `<div class="field"><div class="field-label">${escapeHtml(key)}</div><div class="markdown-field">${htmlContent}</div></div>`;
+            } else {
+                return `<div class="field"><div class="field-label">${escapeHtml(key)}</div><div class="field-value">${escapeHtml(displayValue)}</div></div>`;
+            }
+        }
+
+        function loadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    data = e.target.result.split('\n').filter(line => line.trim()).map(line => JSON.parse(line));
+                    currentPage = 0;
+                    perPage = parseInt(document.getElementById('perPage').value);
+                    render();
+                    document.getElementById('error').innerHTML = '';
+                } catch (err) {
+                    document.getElementById('error').innerHTML = `<div class="error">Error parsing JSONL: ${err.message}</div>`;
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function render() {
+            const start = currentPage * perPage;
+            const end = start + perPage;
+            const page = data.slice(start, end);
+
+            document.getElementById('info').textContent = `Total records: ${data.length} | Showing ${Math.min(start + 1, data.length)}-${Math.min(end, data.length)}`;
+
+            if (page.length === 0) {
+                document.getElementById('records').innerHTML = '<div class="empty">No records to display</div>';
+                document.getElementById('pagination').textContent = '';
+                return;
+            }
+
+            document.getElementById('records').innerHTML = page.map((record, idx) => {
+                const recordNum = start + idx + 1;
+                const fields = Object.entries(record).map(([key, value]) => {
+                    return renderField(key, value);
+                }).join('');
+                return `<div class="record"><div class="record-header"><span class="record-id">#${escapeHtml(record.id || 'N/A')}</span><span class="record-number">${recordNum}/${data.length}</span></div><div class="record-content">${fields}</div></div>`;
+            }).join('');
+
+            const maxPage = Math.ceil(data.length / perPage) - 1;
+            document.getElementById('pagination').textContent = `Page ${currentPage + 1} of ${maxPage + 1}`;
+
+            // Render math after content is loaded
+            if (window.MathJax) {
+                MathJax.typesetPromise().catch(err => console.log(err));
+            }
+        }
+
+        function changePage(page) {
+            const maxPage = Math.ceil(data.length / perPage) - 1;
+            if (page < 0 || page > maxPage) return;
+            currentPage = page;
+            render();
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        document.getElementById('perPage').addEventListener('change', () => {
+            perPage = parseInt(document.getElementById('perPage').value);
+            currentPage = 0;
+            render();
+        });
+    </script>
+</body>
+</html>
