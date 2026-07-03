@@ -9,6 +9,4 @@ Uses Sakana Fugu for model routing.
     2. Use `Gemma-4-31b-it`as a math solver. (use the 31B dense model)
     3. Use Qwen2.5-Coder as a coder.
 - Create custom system prompts for conductor and ensemble models.
-- ~~Implement json parsing~~
-- ~~Implement workflow step scheduling (toposort)~~
-- 
+- Implement runner/dispatch for various llms (make it configurable)
