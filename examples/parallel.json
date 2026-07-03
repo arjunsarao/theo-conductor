@@ -1,0 +1,32 @@
+{ 
+  "task_type": "physics_perturbation_theory",
+  "difficulty": "medium",
+  "question": "A particle of mass m moves in one dimension under the potential V(x)=\\frac{1}{2} kx^2+\\lambda x^4, where λ is small. Estimate the first-order correction to the ground-state energy of the harmonic oscillator.",
+  "needs_tools": false,
+  "workflow": [
+  {
+    "step_id": "derive",
+    "model_id": "strong_physics_model",
+    "instruction": "Derive the main solution to the problem.",
+    "access_list": ["question"]
+  },
+  {
+    "step_id": "algebraic_check",
+    "model_id": "strong_math_model",
+    "instruction": "Check the derivation for algebraic mistakes, missing factors, sign errors, and invalid transformations.",
+    "access_list": ["question", "derive"]
+  },
+  {
+    "step_id": "units_check",
+    "model_id": "math_verifier",
+    "instruction": "Check the derivation using dimensional analysis, limiting cases, physical assumptions, and consistency with known results.",
+    "access_list": ["question", "derive"]
+  },
+  {
+    "step_id": "final",
+    "model_id": "answer_synthesizer",
+    "instruction": "Write the final answer using the derivation and both verifier reports. Resolve any conflicts explicitly.",
+    "access_list": ["question", "derive", "algebraic_check", "units_check"]
+  }
+  ]
+}
