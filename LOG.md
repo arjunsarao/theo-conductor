@@ -6,8 +6,12 @@ Today was generally working on the infrastructure surrounding the system, prepar
 
 - Implemented json parsing of conductor output.
 - Implemented scheduliing via topological sort.
-- Implemented prompt configuration functionality.
-  - Wrote custom system prompts for the LLMs in the system.
 - Added model registry.
 - Implemented logging.
 - Add dummy models to view testing and data flow through a 
+
+## July 6th, 2026
+
+- Wrote system prompt for conductor
+- Implemented prompt configuration
+- Added HLE dataset.

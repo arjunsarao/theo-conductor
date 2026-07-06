@@ -10,3 +10,6 @@ Uses Sakana Fugu for model routing.
     3. Use Qwen2.5-Coder as a coder.
 - Create custom system prompts for conductor and ensemble models.
 - Implement runner/dispatch for various llms (make it configurable)
+- Add HLE benchmarking from huggingface.
+- Question field is added by me, not echoed by the LLM
+- Qwen's context length is >200k tokens.
