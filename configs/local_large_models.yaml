@@ -1,0 +1,51 @@
+models:
+  - model_idx: kimi-k2.6
+    provider: vllm
+    display_name: Kimi K2.6
+    name: kimi-k2.6
+    context_length: 1000000
+    supports_tools: false
+    supports_json: true
+    tags:
+      - local
+      - large
+      - reasoning
+      - coding
+    client:
+      type: openai_compatible
+      base_url: http://localhost:8004/v1
+      model: moonshotai/Kimi-K2.6
+
+  - model_idx: glm-5.2
+    provider: vllm
+    display_name: GLM 5.2
+    name: glm-5.2
+    context_length: 1000000
+    supports_tools: false
+    supports_json: true
+    tags:
+      - local
+      - large
+      - coding
+      - agentic
+    client:
+      type: openai_compatible
+      base_url: http://localhost:8005/v1
+      model: zai-org/GLM-5.2
+
+  - model_idx: deepseek-v4-flash
+    provider: vllm
+    display_name: DeepSeek V4 Flash
+    name: deepseek-v4-flash
+    context_length: 1000000
+    supports_tools: false
+    supports_json: true
+    tags:
+      - local
+      - large
+      - fast
+      - reasoning
+    client:
+      type: openai_compatible
+      base_url: http://localhost:8006/v1
+      model: deepseek-ai/DeepSeek-V4-Flash

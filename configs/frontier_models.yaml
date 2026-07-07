@@ -1,0 +1,57 @@
+models:
+  - model_idx: gpt-5.5
+    provider: openrouter
+    display_name: GPT-5.5
+    name: gpt-5.5
+    context_length: 1000000
+    supports_tools: true
+    supports_json: true
+    cost_per_1m_input_tokens: null
+    cost_per_1m_output_tokens: null
+    tags:
+      - frontier
+      - closed
+      - reasoning
+      - coding
+    client:
+      type: openai_compatible
+      base_url: https://openrouter.ai/api/v1
+      model: openai/gpt-5.5
+
+  - model_idx: claude-opus-4.8
+    provider: openrouter
+    display_name: Claude Opus 4.8
+    name: claude-opus-4.8
+    context_length: 1000000
+    supports_tools: true
+    supports_json: true
+    cost_per_1m_input_tokens: null
+    cost_per_1m_output_tokens: null
+    tags:
+      - frontier
+      - closed
+      - reasoning
+      - coding
+    client:
+      type: openai_compatible
+      base_url: https://openrouter.ai/api/v1
+      model: anthropic/claude-opus-4.8
+
+  - model_idx: gemini-3.1-pro
+    provider: openrouter
+    display_name: Gemini 3.1 Pro
+    name: gemini-3.1-pro
+    context_length: 1000000
+    supports_tools: true
+    supports_json: true
+    cost_per_1m_input_tokens: null
+    cost_per_1m_output_tokens: null
+    tags:
+      - frontier
+      - closed
+      - reasoning
+      - multimodal
+    client:
+      type: openai_compatible
+      base_url: https://openrouter.ai/api/v1
+      model: google/gemini-3.1-pro

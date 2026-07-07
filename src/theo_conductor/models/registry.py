@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any, List
 
@@ -25,7 +27,7 @@ class ModelRegistry:
         return self.get(model_id).client
 
     @classmethod
-    def from_yaml_file(cls, path: str | Path) -> "ModelRegistry":
+    def from_yaml_file(cls, path: str | Path) -> ModelRegistry:
         path = Path(path)
         with path.open() as f:
             data = yaml.safe_load(f) or {}
@@ -37,7 +39,7 @@ class ModelRegistry:
         return cls([cls._spec_from_dict(spec, source=path) for spec in specs])
 
     @classmethod
-    def from_config_dir(cls, path: str | Path = "configs") -> "ModelRegistry":
+    def from_config_dir(cls, path: str | Path = "configs") -> ModelRegistry:
         path = Path(path)
         yaml_files = sorted([*path.glob("*.yaml"), *path.glob("*.yml")])
         if not yaml_files:
