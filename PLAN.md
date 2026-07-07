@@ -50,31 +50,7 @@ The repo is already pointed in the right direction: [runner.py](/Users/arjunsara
    }
    ```
 
-4. **Start with Fugu-style supervised routing**
-   
-   Before GRPO, generate labels by evaluating each worker on each physics problem several times. Your `NOTES.md` pseudocode is exactly the right first move.
-
-   For each problem:
-   - run each candidate worker `n` times
-   - grade each answer
-   - estimate each worker’s success rate
-   - train the conductor to choose the best worker or soft distribution over workers
-
-   This gives you a cheap “Fugu-lite” single-step router. It will also reveal which workers are actually useful for physics.
-
-5. **Then add multi-step workflow distillation**
-   
-   Generate a small library of workflow templates:
-   - single expert
-   - expert + verifier
-   - parallel experts + adjudicator
-   - derivation + numerical checker
-   - solver + units/dimension checker
-   - solver + code/sympy verification + final synthesis
-
-   Run them on the physics benchmark and train the conductor to emit the best-performing workflow. This bridges your current JSON workflow format with the Conductor paper’s idea: learning communication topologies and prompts, not just model selection.
-
-6. **Only then move to GRPO/RL**
+4. **Only then move to GRPO/RL**
    
    The Sakana Fugu report emphasizes learned orchestrators, adaptive scaffolds, evolutionary/RL training, and Fugu-Ultra prioritizing quality on hard tasks. The Conductor paper similarly emphasizes RL discovering coordination strategies over worker pools, including prompt engineering and topologies.
 

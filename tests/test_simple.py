@@ -57,6 +57,12 @@ def test_runner_passes_only_allowed_context(fake_registry):
                 instruction="Do C.",
                 access_list=["a"],
             ),
+            Step(
+                step_id="final",
+                model_idx=0,
+                instruction="Write final.",
+                access_list=["question", "a", "b", "c"],
+            ),
         ],
     )
 
@@ -64,28 +70,31 @@ def test_runner_passes_only_allowed_context(fake_registry):
     result = asyncio.run(runner.run(task))
 
     c_output = result.outputs["c"].text
+    final_output = result.outputs["final"].text
 
     assert "a" in c_output
     assert "b" not in c_output
+    assert "a" in final_output
+    assert "b" in final_output
+    assert "c" in final_output
 
 
-@pytest.mark.asyncio
-async def test_unknown_model_idx_raises(fake_registry):
+def test_unknown_model_idx_raises(fake_registry):
     task = Task(
         task_type="test",
         difficulty=Difficulty.EASY,
         question="Question?",
         workflow=[
             Step(
-                step_id="a",
+                step_id="final",
                 model_idx=999,
-                instruction="Do A.",
-                access_list=[],
+                instruction="Write final.",
+                access_list=["question"],
             ),
         ],
     )
 
     runner = Runner(fake_registry)
 
-    with pytest.raises(ValueError, match="Unknown model_idx"):
-        await runner.run(task)
+    with pytest.raises(ValueError, match="Model '999' not found"):
+        asyncio.run(runner.run(task))

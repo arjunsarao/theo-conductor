@@ -13,7 +13,7 @@ wheels/
 data/
 
 # Model weights
-models/
+/models/
 
 # Papers
 *.pdf
