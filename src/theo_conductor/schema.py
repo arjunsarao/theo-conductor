@@ -60,8 +60,14 @@ class ModelResponse:
 
 
 class ModelClient(Protocol):
-    async def generate(self, instruction: str, question: str, context: Dict[str, str], max_tokens: int | None = None, temperature: float | None = None) -> ModelResponse:
-        ...
+    async def generate(
+        self,
+        instruction: str,
+        question: str,
+        context: Dict[str, str],
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> ModelResponse: ...
 
 
 @dataclass(frozen=True)
@@ -75,6 +81,6 @@ class ModelSpec:
     context_length: int | None = None
     supports_tools: bool = False
     supports_json: bool = False
-    cost_per_1m_input_tokens: float | None = None
-    cost_per_1m_output_tokens: float | None = None
+    cost_per_1m_input_tokens: float | None = None  # $USD
+    cost_per_1m_output_tokens: float | None = None  # $USD
     tags: Set[str] = field(default_factory=set)

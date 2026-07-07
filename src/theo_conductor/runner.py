@@ -3,6 +3,7 @@ import asyncio
 from .scheduler import topological_sort
 from .schema import Task, RunResult, StepOutput, Step
 from .models.registry import ModelRegistry
+from .validate import validate_task
 
 
 class Runner:
@@ -11,28 +12,35 @@ class Runner:
         self.tool_registry = tool_registry
 
     async def run(self, task: Task) -> RunResult:
+        validate_task(task, self.model_registry)
         layers = topological_sort(task)
         outputs: dict[str, StepOutput] = {}
 
         for layer in layers:
-            layer_results = await asyncio.gather(
-                    *[
-                        self.run_step(step, task, outputs) for step in layer
-                    ]
-            )
+            layer_results = await asyncio.gather(*[self.run_step(step, task, outputs) for step in layer])
 
             for step, result in zip(layer, layer_results):
                 outputs[step.step_id] = result
 
         return RunResult(task=task, outputs=outputs)
-        
+
     async def run_step(self, step: Step, task: Task, outputs: dict[str, StepOutput]) -> StepOutput:
         spec = self.model_registry.get(step.model_id)
 
-        context = {
-            key: outputs[key] for key in step.access_list if key in outputs
-        }
+        context = {key: outputs[key] for key in step.access_list if key in outputs}
 
-        response = await spec.client.generate(instruction=step.instruction, question=task.question, context=context, max_tokens=getattr(step, "max_tokens", None), temperature=getattr(step, "temperature", None))
+        response = await spec.client.generate(
+            instruction=step.instruction,
+            question=task.question,
+            context=context,
+            max_tokens=getattr(step, "max_tokens", None),
+            temperature=getattr(step, "temperature", None),
+        )
 
-        return StepOutput(step_id=step.step_id, model_id=step.model_id, text=response.text, usage=response.usage, latency_ms=response.latency_ms)
+        return StepOutput(
+            step_id=step.step_id,
+            model_id=step.model_id,
+            text=response.text,
+            usage=response.usage,
+            latency_ms=response.latency_ms,
+        )

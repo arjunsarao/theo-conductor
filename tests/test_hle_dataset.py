@@ -6,7 +6,7 @@ import pytest
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
-from hle import HLEDataset
+from theo_conductor.hle import HLEDataset
 
 
 def test_hle_dataset_loads_default_parquet():

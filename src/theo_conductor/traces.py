@@ -1,7 +1,11 @@
 """
-This file should provide the logging functionality for the runner. It should allow for logging of errors, warnings, and informational messages. The logging should be configurable to allow for different levels of verbosity and should support logging to both the console and to a file.
+This file should provide the logging functionality for the runner. It should allow for logging of errors, warnings, and
+informational messages. The logging should be configurable to allow for different levels of verbosity and should support
+logging to both the console and to a file.
 """
+
 from .schema import Step
+
 
 def print_step_order(scheduled_steps: list[list[Step]]) -> None:
     """

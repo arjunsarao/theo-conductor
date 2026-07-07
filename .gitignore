@@ -14,3 +14,6 @@ data/
 
 # Model weights
 models/
+
+# Papers
+*.pdf
