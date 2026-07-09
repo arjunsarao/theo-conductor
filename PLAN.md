@@ -1,74 +1,85 @@
-1. **Implement the conductor loop end-to-end before training**
-   
-   Right now you have the worker DAG runner, but you still need:
-   - conductor model call: question -> JSON workflow
-   - JSON parsing/repair/validation
-   - execution through `Runner`
-   - final answer extraction
-   - reward computation
-   - trace logging
+# Theo Conductor Plan
 
-   The critical object is a saved trajectory:
+## Readiness Check
 
-   ```json
-   {
-     "question": "...",
-     "gold_answer": "...",
-     "workflow": [...],
-     "worker_outputs": {...},
-     "final_answer": "...",
-     "reward": 0.0,
-     "cost": 0.034,
-     "latency_ms": 42100
-   }
-   ```
+`train.py` is no longer just a sketch. It already:
+- loads a dataset from Hugging Face,
+- builds conductor prompts,
+- loads a model processing class,
+- constructs a `GRPOTrainer`,
+- and can start training once the remaining pieces are in place.
 
-2. **Only then move to GRPO/RL**
-   
-   The Sakana Fugu report emphasizes learned orchestrators, adaptive scaffolds, evolutionary/RL training, and Fugu-Ultra prioritizing quality on hard tasks. The Conductor paper similarly emphasizes RL discovering coordination strategies over worker pools, including prompt engineering and topologies.
+What is still missing is the set of pieces that make the run meaningful and reliable.
 
-   Your first GRPO reward can be simple:
-   - `1.0`: final answer correct
-   - `0.5`: reasoning substantially correct but final answer wrong/incomplete
-   - `0.0`: wrong
-   - `-0.1`: invalid JSON/workflow
-   - small penalties for excessive cost/latency
+## Must Finish Before First Real Training Run
 
-   For physics, I’d also add:
-   - units/dimensions reward
-   - numerical tolerance reward
-   - symbolic equivalence where possible
-   - penalty for unsupported shortcuts or missing assumptions
+1. Verify the training entrypoint end to end.
+- Run `src/theo_conductor/train.py` in `--dry-run` mode.
+- Confirm the prompt format matches what the conductor model should emit.
+- Confirm the dataset rows contain the fields the trainer and reward function expect.
 
-3. **Fix a few repo issues before training**
-   
-   I’d prioritize these implementation chores:
-   - make `validate.py` real: schema validation, model existence, final-step check, acyclic workflow
-   - make `Runner` call `model_registry.validate_task(task)` before execution
-   - fix test mismatch: `ModelRegistry.get` currently raises `"Model '999' not found"`, but the test expects `"Unknown model_idx"`
-   - fix `main.py`: `async_main()` is never awaited
-   - add a conductor client that turns `build_prompt(...)` output into a `Task`
-   - improve context serialization in `openai_compat.py`; it currently inserts `StepOutput` objects directly into XML-ish blocks
+2. Finalize the conductor output format.
+- Decide whether the model should emit raw JSON, fenced JSON, or a relaxed JSON-ish format.
+- Make the parser in `src/theo_conductor/grpo.py` match that decision.
+- Ensure the parser always produces a valid `Task` or a clear failure reason.
 
-4. **Build the physics grader early**
-   
-   This is the highest-leverage part. A Fugu-Ultra clone for physics will live or die by reward quality. Implement graders in layers:
-   - exact string / multiple choice
-   - numeric tolerance
-   - unit-aware comparison
-   - symbolic equivalence via SymPy
-   - LLM judge for derivation quality
-   - optional verifier-model disagreement signal
+3. Confirm the reward function is usable for GRPO.
+- Keep the basic reward ladder:
+  - `0.0` malformed output
+  - `0.2` parseable but invalid workflow
+  - `0.5` valid workflow but wrong answer
+  - `1.0` correct answer
+- Decide whether to include extra penalties for cost and latency in the first version.
+- Verify the reward signature matches the TRL version in use.
 
-**My Suggested Milestone Order**
+4. Make worker-model access reliable.
+- Confirm every worker in `configs/frontier_models.yaml` has valid credentials and a working endpoint.
+- Confirm local worker configs still load through `ModelRegistry`.
+- Decide which worker pool is the actual training target for the first run.
 
-1. Physics benchmark loader: HLE/MegaScience filtered to physics.
-2. Worker registry with 3-5 real models.
-3. End-to-end conductor -> workflow -> runner -> grader trace.
-4. Baselines: single best worker, best-of-N, parallel adjudicator.
-5. SFT router from per-worker physics success rates.
-6. Template workflow distillation.
-7. GRPO over conductor JSON workflows.
-8. Add cost/latency-aware reward once quality improves.
+5. Validate the task execution loop.
+- Confirm the conductor output can be parsed into a `Task`.
+- Confirm `Runner` can execute that task with the configured worker registry.
+- Confirm the final answer can be extracted consistently.
 
-One subtle but important recommendation: do not clone Fugu-Ultra’s full generality first. Clone the *training shape*: learned orchestration over heterogeneous workers with end-to-end reward. Keep the physics domain narrow enough that your reward is trustworthy.
+6. Fix repository mismatches that block confidence.
+- Reconcile tests and code paths that still refer to missing local dataset wrappers.
+- Make sure `main.py` and any other entrypoints do not contain dead or un-awaited async calls.
+- Remove or rewrite any stale comments or TODOs that no longer describe the code.
+
+## Next After the First Run Works
+
+1. Add a proper evaluation set.
+- Use a held-out subset of HLE, GPQA, or MegaScience.
+- Track exact-match, normalized answer match, and task validity separately.
+
+2. Add stronger grading.
+- Numeric tolerance checks for physics.
+- Symbolic equivalence where possible.
+- Optional LLM judge for derivation quality.
+
+3. Add baseline comparisons.
+- Single best worker.
+- Best-of-N worker sampling.
+- Parallel adjudication.
+- Template workflow baseline.
+
+4. Add training observability.
+- Save trajectories.
+- Log costs and latency.
+- Save parser failures and invalid workflows.
+- Record per-worker success rates.
+
+5. Improve the conductor prompt.
+- Add worked examples of valid workflows.
+- Add explicit rules for tool use and access lists.
+- Add format constraints that reduce malformed JSON.
+
+## Suggested Execution Order
+
+1. Dry-run `train.py`.
+2. Validate worker registry access.
+3. Run one tiny end-to-end rollout.
+4. Verify reward computation on a handful of examples.
+5. Launch a short GRPO training run.
+6. Inspect failures and tighten the prompt/parser/reward loop.
