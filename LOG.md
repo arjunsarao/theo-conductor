@@ -24,3 +24,8 @@ Today was generally working on the infrastructure surrounding the system, prepar
 - Added configs for worker agent pools with small local models, large local models, and frontier models.
 - Refactored to use `datasets` library for HLE and GPQA.
 - Working on train.py
+
+## July 9th, 2026
+
+- Implemented `grpo.py`
+- 

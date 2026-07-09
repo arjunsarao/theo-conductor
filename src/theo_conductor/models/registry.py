@@ -26,6 +26,9 @@ class ModelRegistry:
     def client(self, model_id: str) -> ModelClient:
         return self.get(model_id).client
 
+    def get_models(self) -> list[str]:
+        return [spec.display_name for spec in self._models.values()]
+
     @classmethod
     def from_yaml_file(cls, path: str | Path) -> ModelRegistry:
         path = Path(path)

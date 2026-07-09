@@ -15,3 +15,5 @@ def print_step_order(scheduled_steps: list[list[Step]]) -> None:
         print(f"Layer {layer_index + 1}:")
         for step in layer:
             print("\t" + step.step_id)
+
+# Should add functionality eventually to log how many LLM calls total
