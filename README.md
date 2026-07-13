@@ -13,3 +13,7 @@ Uses Sakana Fugu for model routing.
 - Add HLE benchmarking from huggingface.
 - Question field is added by me, not echoed by the LLM
 - Qwen's context length is >200k tokens.
+
+Final filtered data is 1830 questions.
+
+Total calls = 1830 questions * 5 steps per workflow * 4 rollouts

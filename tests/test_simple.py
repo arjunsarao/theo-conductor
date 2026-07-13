@@ -98,3 +98,25 @@ def test_unknown_model_idx_raises(fake_registry):
 
     with pytest.raises(ValueError, match="Model '999' not found"):
         asyncio.run(runner.run(task))
+
+
+def test_runner_emits_step_events(fake_registry):
+    events = []
+    task = Task(
+        task_type="test",
+        difficulty=Difficulty.EASY,
+        question="Question?",
+        workflow=[
+            Step(
+                step_id="final",
+                model_idx=0,
+                instruction="Answer.",
+                access_list=["question"],
+            )
+        ],
+    )
+
+    asyncio.run(Runner(fake_registry, event_handler=lambda *event: events.append(event)).run(task))
+
+    assert [event[0] for event in events] == ["started", "completed"]
+    assert events[1][2].step_id == "final"

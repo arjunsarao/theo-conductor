@@ -28,4 +28,11 @@ Today was generally working on the infrastructure surrounding the system, prepar
 ## July 9th, 2026
 
 - Implemented `grpo.py`
-- 
+- Implemented `train.py`
+- Updated HLE and GPQA to filter for physics-domains as well.
+
+## July 13th, 2026
+
+- Fixed up `main.py`, added functionality to provide question to conductor from main.
+- Add tests
+- Improve logging

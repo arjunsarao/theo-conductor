@@ -41,7 +41,7 @@ Workflow {
 
 Step {
     step_id: str
-    model_id: int
+    model_id: string|int
     instruction: str
     access_list: list[str]
 }

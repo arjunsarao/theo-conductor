@@ -1890,6 +1890,7 @@ name = "theo-conductor"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "colorama" },
     { name = "huggingface" },
     { name = "huggingface-hub" },
     { name = "numpy" },
@@ -1900,6 +1901,7 @@ dependencies = [
     { name = "pytest" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
+    { name = "rich" },
     { name = "torch" },
     { name = "torchvision" },
     { name = "trl" },
@@ -1908,6 +1910,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "colorama", specifier = ">=0.4.6" },
     { name = "huggingface", specifier = ">=0.0.1" },
     { name = "huggingface-hub", specifier = ">=1.21.0" },
     { name = "numpy", specifier = ">=2.5.0" },
@@ -1918,6 +1921,7 @@ requires-dist = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "rich", specifier = ">=15.0.0" },
     { name = "torch", specifier = ">=2.12.1" },
     { name = "torchvision", specifier = ">=0.27.1" },
     { name = "trl", specifier = ">=1.7.1" },
