@@ -1,32 +1,29 @@
 [project]
 name = "theo-conductor"
 version = "0.1.0"
-description = "Add your description here"
+description = "LLM orchestration and routing system"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
+
 dependencies = [
-    "colorama>=0.4.6",
-    "huggingface>=0.0.1",
-    "huggingface-hub>=1.21.0",
-    "numpy>=2.5.0",
-    "openai>=2.44.0",
-    "pillow>=12.3.0",
-    "pyarrow>=24.0.0",
-    "pydantic>=2.13.4",
-    "pytest>=9.1.1",
-    "python-dotenv>=1.2.2",
-    "pyyaml>=6.0.3",
-    "rich>=15.0.0",
-    "torch>=2.12.1",
-    "torchvision>=0.27.1",
-    "trl>=1.7.1",
-    "wandb>=0.28.0",
+    "vllm==0.22.0+cu129",
+    "torch==2.11.0+cu129",
+    "torchvision==0.26.0+cu129",
+    "torchaudio==2.11.0+cu129",
 ]
 
-[tool.pytest.ini_options]
-pythonpath = ["src"]
+[[tool.uv.index]]
+name = "vllm-cu129"
+url = "https://wheels.vllm.ai/0.22.0/cu129"
+explicit = true
 
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129"
 explicit = true
+
+[tool.uv.sources]
+vllm = { index = "vllm-cu129" }
+torch = { index = "pytorch-cu129" }
+torchvision = { index = "pytorch-cu129" }
+torchaudio = { index = "pytorch-cu129" }
