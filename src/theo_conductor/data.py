@@ -1,7 +1,7 @@
 import os
 import random
 
-from datasets import concatenate_datasets, load_dataset
+from datasets import Dataset, DatasetDict, load_dataset
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -13,6 +13,9 @@ PHYSICS_ADJACENT_DOMAINS = {
     "Engineering",
     "Computer Science/AI",
 }
+
+MEGASCIENCE_DATASET_ID = "MegaScience/MegaScience"
+DEFAULT_MEGASCIENCE_SAMPLES = 2_000
 
 
 def format_mcq_batch(examples, seed=42):
@@ -98,7 +101,53 @@ def load_gpqa_physics_dataset(seed=42):
     return gpqa_physics
 
 
-def build_training_dataset(seed=42):
-    gpqa_physics = load_gpqa_physics_dataset(seed=seed)
-    hle_physics = load_hle_physics_dataset()
-    return concatenate_datasets([gpqa_physics, hle_physics])
+def load_megascience_dataset(
+    seed: int = 42,
+    max_samples: int | None = DEFAULT_MEGASCIENCE_SAMPLES,
+) -> Dataset:
+    """Load and normalize the MegaScience training data.
+
+    MegaScience's finalized records expose ``question``, ``answer``,
+    ``subject``, and ``reference_answer`` fields.  The conductor training
+    pipeline needs the first two plus the metadata fields used by its reward
+    function, so normalize them here and assign stable local IDs.
+
+    Sampling happens after a seeded shuffle so ``max_samples`` is a genuine
+    deterministic subset rather than simply the first rows in dataset order.
+    Pass ``max_samples=None`` to load the complete split.
+    """
+    if max_samples is not None and max_samples < 0:
+        raise ValueError("max_samples must be non-negative or None")
+
+    dataset = load_dataset(
+        MEGASCIENCE_DATASET_ID,
+        split="train",
+        token=os.getenv("HF_TOKEN"),
+    ).select_columns(["question", "answer", "subject", "reference_answer"])
+
+    if max_samples is not None:
+        dataset = dataset.shuffle(seed=seed).select(range(min(max_samples, len(dataset))))
+
+    dataset = dataset.add_column("id", [f"megascience-{index}" for index in range(len(dataset))])
+    return dataset.add_column("answer_type", ["freeForm"] * len(dataset))
+
+
+def build_training_dataset(
+    seed: int = 42,
+    max_samples: int | None = DEFAULT_MEGASCIENCE_SAMPLES,
+) -> Dataset:
+    """Build the default conductor training dataset from MegaScience."""
+    return load_megascience_dataset(seed=seed, max_samples=max_samples)
+
+
+def build_megascience_splits(
+    seed: int = 42,
+    total_samples: int = DEFAULT_MEGASCIENCE_SAMPLES,
+    validation_samples: int = 200,
+) -> DatasetDict:
+    """Return deterministic train/validation splits from one MegaScience subset."""
+    if validation_samples <= 0 or validation_samples >= total_samples:
+        raise ValueError("validation_samples must be between 1 and total_samples - 1")
+
+    dataset = load_megascience_dataset(seed=seed, max_samples=total_samples)
+    return dataset.train_test_split(test_size=validation_samples, seed=seed, shuffle=True)

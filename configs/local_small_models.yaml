@@ -1,41 +1,38 @@
 models:
   - provider: vllm
-    display_name: Qwen 3.5 9B Base
+    display_name: DeepSeek-R1-Distill-Qwen-32B
     context_length: 131072
     supports_tools: false
     supports_json: true
     tags:
-      - local
-      - cheap
-      - general
-    client:
-      type: openai_compatible
-      base_url: http://localhost:8001/v1
-      model: Qwen/Qwen3.5-9B-Base
-
-  - provider: vllm
-    display_name: Qwen 3 8B Megascience LoRA
-    context_length: 131072
-    supports_tools: false
-    supports_json: true
-    tags:
-      - local
-      - science
-      - finetuned
-    client:
-      type: openai_compatible
-      base_url: http://localhost:8002/v1
-      model: qwen-megascience
-
-  - provider: vllm
-    display_name: Nemotron 30B A3B
-    context_length: 128000
-    supports_tools: false
-    supports_json: true
-    tags:
-      - local
       - reasoning
+      - physics
     client:
       type: openai_compatible
-      base_url: http://localhost:8003/v1
-      model: nvidia-nemotron
+      base_url: http://localhost:8101/v1
+      model: deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
+
+  - provider: vllm
+    display_name: Gemma-4-31b-it
+    context_length: 131072
+    supports_tools: false
+    supports_json: true
+    tags:
+      - math
+      - dense
+    client:
+      type: openai_compatible
+      base_url: http://localhost:8102/v1
+      model: google/gemma-4-31b-it
+
+  - provider: vllm
+    display_name: Qwen2.5-Coder
+    context_length: 32768
+    supports_tools: false
+    supports_json: true
+    tags:
+      - coding
+    client:
+      type: openai_compatible
+      base_url: http://localhost:8103/v1
+      model: Qwen/Qwen2.5-Coder-32B-Instruct

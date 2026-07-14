@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Workflow Viewer</title>
+  <style>
+    :root { color-scheme: light; --ink: #24303a; --muted: #6c7882; --line: #d9e0e5; --paper: #fff; --wash: #f5f7f8; --accent: #356b8c; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--wash); color: var(--ink); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { width: min(100% - 32px, 960px); margin: 36px auto 56px; }
+    header { display: flex; justify-content: space-between; gap: 20px; align-items: end; margin-bottom: 26px; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 4px; font-size: 26px; font-weight: 650; letter-spacing: -.02em; }
+    .subtle, .label { color: var(--muted); }
+    .subtle { margin-bottom: 0; }
+    select { min-width: 190px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); font: inherit; }
+    .panel, .step { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; }
+    .panel { padding: 20px; margin-bottom: 18px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 17px; font-size: 13px; }
+    .meta strong { color: var(--ink); font-weight: 600; }
+    .label { display: block; margin-bottom: 5px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .question { margin-bottom: 0; white-space: pre-wrap; }
+    .steps { display: grid; gap: 12px; }
+    .step { position: relative; padding: 17px 19px 18px; }
+    .step::before { content: ""; position: absolute; left: -1px; top: 17px; bottom: 17px; width: 3px; border-radius: 3px; background: var(--accent); }
+    .step-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+    h2 { margin-bottom: 0; font-size: 17px; font-weight: 650; }
+    .step-number { color: var(--muted); font-size: 12px; }
+    .instruction { margin-bottom: 15px; white-space: pre-wrap; }
+    .access { display: flex; flex-wrap: wrap; gap: 6px; }
+    code { padding: 2px 6px; border-radius: 4px; background: #edf2f5; color: #365366; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    @media (max-width: 650px) { header { display: block; } select { margin-top: 14px; width: 100%; } main { width: min(100% - 20px, 960px); margin-top: 22px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Workflow viewer</h1>
+        <p class="subtle">A small, dependency-aware view of the example workflows.</p>
+      </div>
+      <label>
+        <span class="label">Example</span>
+        <select id="example" aria-label="Choose an example workflow"></select>
+      </label>
+    </header>
+
+    <section class="panel" aria-labelledby="workflow-title">
+      <div class="meta">
+        <span><span class="label">Pattern</span><strong id="workflow-title"></strong></span>
+        <span><span class="label">Task type</span><strong id="task-type"></strong></span>
+        <span><span class="label">Difficulty</span><strong id="difficulty"></strong></span>
+      </div>
+      <span class="label">Question</span>
+      <p class="question" id="question"></p>
+    </section>
+
+    <section>
+      <span class="label">Execution steps</span>
+      <div class="steps" id="steps"></div>
+    </section>
+  </main>
+
+  <script>
+    // Keep the viewer standalone: the examples are intentionally embedded here so
+    // the file can be opened directly without a local web server or dependencies.
+    const examples = {
+      "adjudicator.json": {
+        "task_type": "theoretical_physics_general_relativity",
+        "difficulty": "hard",
+        "question": "Consider a five-dimensional spacetime with metric ds^2=e^{2A(y)}(g_{mu nu}(x)dx^mu dx^nu+dy^2), where y is periodic with period 2pi, A(y)=a cos(y), and g_{mu nu} is a four-dimensional Einstein metric. For a transverse-traceless spin-2 perturbation h_{mu nu}(x,y)=epsilon_{mu nu}(x)psi(y), derive the one-dimensional eigenvalue equation for psi(y), identify the appropriate periodic boundary condition, and explain how the lowest eigenvalue is related to the mass of the four-dimensional mode. State any convention-dependent curvature shift explicitly rather than silently assuming flat four-dimensional slices.",
+        "workflow": [
+          { "step_id": "derive_sturm_liouville", "model_id": 0, "instruction": "Derive the separated spin-2 fluctuation equation from the linearized Einstein equations for the warped metric. Put the y-dependent equation in a clear Sturm-Liouville or Schroedinger form, define the eigenvalue convention, and impose periodicity at y=0 and y=2pi.", "access_list": ["question"] },
+          { "step_id": "independent_derivation", "model_id": 1, "instruction": "Work out the same Kaluza-Klein reduction independently. Check the warp-factor derivatives, the measure appearing in the inner product, and whether a field redefinition changes the apparent potential. Explain which expression is invariant under the choice of wavefunction normalization.", "access_list": ["question"] },
+          { "step_id": "physics_adjudication", "model_id": 2, "instruction": "Compare the two derivations. Adjudicate signs, powers of e^A, boundary conditions, and the relation between the separated eigenvalue and the four-dimensional mass, including the possible curvature shift for an Einstein but non-flat g_{mu nu}. Flag claims that cannot be fixed without specifying the curvature convention.", "access_list": ["question", "derive_sturm_liouville", "independent_derivation"] },
+          { "step_id": "final", "model_id": 3, "instruction": "Synthesize a rigorous final response using the derivations and adjudication. Present one consistent eigenvalue equation with definitions, the periodic boundary condition, and the mass/eigenvalue relation. Mention convention-dependent alternatives briefly where necessary, and do not invent a numerical spectrum that the question does not request.", "access_list": ["question", "derive_sturm_liouville", "independent_derivation", "physics_adjudication"] }
+        ]
+      },
+      "best_of_n.json": {
+        "task_type": "classical_mechanics",
+        "difficulty": "medium",
+        "question": "A small pendulum of length L and mass m is released from rest at an angle theta_0, with no friction. Determine its speed when it passes through the lowest point, and explain the small-angle limit. Use conservation of mechanical energy and state clearly whether theta_0 is measured from the downward vertical.",
+        "workflow": [
+          { "step_id": "candidate_energy", "model_id": 0, "instruction": "Produce an independent candidate solution using conservation of mechanical energy. Define the angular convention, derive the exact speed at the bottom, and check the small-angle approximation.", "access_list": ["question"] },
+          { "step_id": "candidate_dynamics", "model_id": 1, "instruction": "Solve the problem independently from the equation of motion or an equivalent potential-energy argument. Pay special attention to the height change, trigonometric identity, and dimensional consistency.", "access_list": ["question"] },
+          { "step_id": "candidate_check", "model_id": 2, "instruction": "Generate a third independent answer and stress-test the likely result using limiting cases: theta_0=0, theta_0 approaching pi, and small theta_0. Identify common factor-of-two or angle-convention errors.", "access_list": ["question"] },
+          { "step_id": "final", "model_id": 3, "instruction": "Choose the most correct candidate, reconcile any discrepancies, and write the final answer. Include the exact expression for the speed, the assumptions, and its small-angle form. Do not mention the workflow or candidates in the answer.", "access_list": ["question", "candidate_energy", "candidate_dynamics", "candidate_check"] }
+        ]
+      },
+      "single_expert.json": {
+        "task_type": "quantum_mechanics",
+        "difficulty": "medium",
+        "question": "A particle of mass m is in the one-dimensional harmonic-oscillator potential V(x)=(1/2)m omega^2 x^2. A weak perturbation V'(x)=lambda x^4 is added, with lambda>0. Using time-independent perturbation theory, find the ground-state energy through first order in lambda.",
+        "workflow": [
+          { "step_id": "final", "model_id": 0, "instruction": "Solve the problem as a single expert. Derive the first-order correction from the harmonic-oscillator ground-state expectation value of x^4, keep all factors of hbar, m, and omega explicit, and state the result including the unperturbed ground-state energy. Briefly indicate the order in lambda being neglected.", "access_list": ["question"] }
+        ]
+      }
+    };
+
+    const $ = (id) => document.getElementById(id);
+    const text = (value) => String(value ?? "");
+
+    function render(name) {
+      const example = examples[name];
+      $("workflow-title").textContent = name.replace(/\.json$/, "");
+      $("task-type").textContent = text(example.task_type);
+      $("difficulty").textContent = text(example.difficulty);
+      $("question").textContent = text(example.question);
+      $("steps").replaceChildren(...example.workflow.map((step, index) => {
+        const article = document.createElement("article");
+        article.className = "step";
+        const head = document.createElement("div");
+        head.className = "step-head";
+        head.innerHTML = `<h2>${text(step.step_id)}</h2><span class="step-number">step ${index + 1} · model ${text(step.model_id)}</span>`;
+        const instructionLabel = document.createElement("span");
+        instructionLabel.className = "label";
+        instructionLabel.textContent = "Instruction";
+        const instruction = document.createElement("p");
+        instruction.className = "instruction";
+        instruction.textContent = text(step.instruction);
+        const accessLabel = document.createElement("span");
+        accessLabel.className = "label";
+        accessLabel.textContent = "Can access";
+        const access = document.createElement("div");
+        access.className = "access";
+        step.access_list.forEach((key) => {
+          const chip = document.createElement("code");
+          chip.textContent = key;
+          access.append(chip);
+        });
+        article.append(head, instructionLabel, instruction, accessLabel, access);
+        return article;
+      }));
+    }
+
+    Object.keys(examples).forEach((name) => {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      $("example").append(option);
+    });
+    $("example").addEventListener("change", (event) => render(event.target.value));
+    render($("example").value);
+  </script>
+</body>
+</html>

@@ -20,7 +20,7 @@ Rules:
 - A step may not access future steps.
 - Independent steps should only access ["question"].
 - The final step must be named "final".
-- The final step should synthesize the final answer.
+- The final step should synthesize the final answer and its instruction must require a separate final line exactly formatted as `FINAL: <answer>`.
 - Prefer parallel verifier steps when useful.
 - Prefer specialist workers when their strengths match the subtask.
 - Keep workflows minimal. Do not add unnecessary steps.

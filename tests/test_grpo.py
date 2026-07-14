@@ -1,13 +1,17 @@
+import asyncio
+
 import pytest
 
 from theo_conductor.grpo import (
     ConductorParseError,
+    answers_match,
+    compute_reward_traces,
     compute_reward,
     parse_conductor_json,
 )
 from theo_conductor.models.fake import FakeModelClient
 from theo_conductor.models.registry import ModelRegistry
-from theo_conductor.schema import ModelSpec
+from theo_conductor.schema import ModelResponse, ModelSpec
 
 
 VALID_COMPLETION = """
@@ -20,7 +24,7 @@ VALID_COMPLETION = """
     {
       "step_id": "final",
       "model_id": "solver",
-      "instruction": "Return the answer.",
+      "instruction": "Return the answer. End with FINAL: <answer>.",
       "access_list": ["question"]
     }
   ],
@@ -40,6 +44,13 @@ def test_parse_conductor_json_accepts_fenced_json():
 def test_parse_conductor_json_rejects_invalid_workflow():
     with pytest.raises(ConductorParseError):
         parse_conductor_json('{"workflow": []}')
+
+
+def test_parse_conductor_json_requires_extractable_final_output():
+    completion = VALID_COMPLETION.replace("End with FINAL: <answer>.", "Return only the answer.")
+
+    with pytest.raises(ConductorParseError, match="FINAL"):
+        parse_conductor_json(completion)
 
 
 def test_compute_reward_scores_malformed_invalid_valid_and_correct():
@@ -71,3 +82,63 @@ def test_compute_reward_validates_model_ids_when_registry_is_supplied():
     registry = ModelRegistry([ModelSpec(model_idx="other", client=FakeModelClient("other"))])
 
     assert compute_reward([VALID_COMPLETION], ground_truth=["A"], model_registry=registry) == [0.2]
+
+
+def test_answers_match_accepts_close_scientific_numbers_and_equivalent_symbols():
+    assert answers_match("6.022e23", "6.02214076 × 10^23")
+    assert answers_match("0.3333334", "1/3")
+    assert answers_match(r"\frac{1}{2}", "0.5")
+    assert answers_match("(x + 1) * (x - 1)", "x^2 - 1")
+    assert not answers_match("1.2", "1.0")
+
+
+def test_reward_does_not_run_workers_unless_explicitly_enabled():
+    calls = 0
+
+    class CountingClient(FakeModelClient):
+        async def generate(self, *args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return await super().generate(*args, **kwargs)
+
+    registry = ModelRegistry([ModelSpec(model_idx="solver", client=CountingClient("FINAL: A"))])
+
+    assert compute_reward([VALID_COMPLETION], ground_truth=["A"], model_registry=registry) == [1.0]
+    assert calls == 0
+
+
+def test_optional_execution_works_inside_an_active_event_loop():
+    class AnswerClient:
+        async def generate(self, **kwargs):
+            return ModelResponse(text="working\nFINAL: A")
+
+    registry = ModelRegistry([ModelSpec(model_idx="solver", client=AnswerClient())])
+
+    async def reward_from_loop():
+        return compute_reward(
+            [VALID_COMPLETION],
+            ground_truth=["A"],
+            model_registry=registry,
+            execute_workflows=True,
+        )
+
+    assert asyncio.run(reward_from_loop()) == [1.0]
+
+
+def test_reward_traces_include_the_executed_vllm_workflow_result():
+    class AnswerClient:
+        async def generate(self, **kwargs):
+            return ModelResponse(text="FINAL: A")
+
+    registry = ModelRegistry([ModelSpec(model_idx="solver", provider="vllm", client=AnswerClient())])
+
+    [trace] = compute_reward_traces(
+        [VALID_COMPLETION],
+        ground_truth=["A"],
+        model_registry=registry,
+        execute_workflows=True,
+    )
+
+    assert trace.reward == 1.0
+    assert trace.task is not None
+    assert trace.run_result is not None

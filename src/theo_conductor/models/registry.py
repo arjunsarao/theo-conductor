@@ -29,6 +29,10 @@ class ModelRegistry:
     def get_models(self) -> list[str]:
         return [spec.display_name for spec in self._models.values()]
 
+    def model_ids(self) -> list[int | str]:
+        """Return the stable IDs accepted by conductor workflow steps."""
+        return list(self._models)
+
     @classmethod
     def from_yaml_file(cls, path: str | Path) -> ModelRegistry:
         path = Path(path)
@@ -43,6 +47,7 @@ class ModelRegistry:
 
     @classmethod
     def from_config_dir(cls, path: str | Path = "configs") -> ModelRegistry:
+        """Load all YAML model specs in a directory (backward-compatible API)."""
         path = Path(path)
         yaml_files = sorted([*path.glob("*.yaml"), *path.glob("*.yml")])
         if not yaml_files:
@@ -52,13 +57,12 @@ class ModelRegistry:
         for yaml_file in yaml_files:
             with yaml_file.open() as f:
                 data = yaml.safe_load(f) or {}
-
             file_specs = data.get("models", data) if isinstance(data, dict) else data
             if not isinstance(file_specs, list):
                 raise ValueError(f"{yaml_file} must contain a list of models or a 'models' list")
             specs.extend(cls._spec_from_dict(spec, source=yaml_file) for spec in file_specs)
-
         return cls(specs)
+
 
     @staticmethod
     def _key_for(spec: ModelSpec) -> int | str:

@@ -126,7 +126,12 @@ async def create_task(question: str, registry: ModelRegistry, conductor_model: s
         max_tokens=2048,
         temperature=0.1,
     )
-    return parse_conductor_json(response.text, question=question, model_registry=registry)
+    return parse_conductor_json(
+        response.text,
+        question=question,
+        model_registry=registry,
+        require_final_answer=False,
+    )
 
 
 async def async_main(argv: Sequence[str] | None = None) -> RunResult:

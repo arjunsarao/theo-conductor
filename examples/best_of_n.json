@@ -1,0 +1,31 @@
+{
+  "task_type": "classical_mechanics",
+  "difficulty": "medium",
+  "question": "A small pendulum of length L and mass m is released from rest at an angle theta_0, with no friction. Determine its speed when it passes through the lowest point, and explain the small-angle limit. Use conservation of mechanical energy and state clearly whether theta_0 is measured from the downward vertical.",
+  "workflow": [
+    {
+      "step_id": "candidate_energy",
+      "model_id": 0,
+      "instruction": "Produce a candidate solution using conservation of mechanical energy. Define the angular convention, derive the exact speed at the bottom, and check the small-angle approximation.",
+      "access_list": ["question"]
+    },
+    {
+      "step_id": "candidate_dynamics",
+      "model_id": 1,
+      "instruction": "Solve the problem from the equation of motion or an equivalent potential-energy argument. Pay special attention to the height change, trigonometric identity, and dimensional consistency.",
+      "access_list": ["question"]
+    },
+    {
+      "step_id": "candidate_check",
+      "model_id": 2,
+      "instruction": "Generate an answer and stress-test the likely result using limiting cases: theta_0=0, theta_0 approaching pi, and small theta_0. Identify common factor-of-two or angle-convention errors.",
+      "access_list": ["question"]
+    },
+    {
+      "step_id": "final",
+      "model_id": 3,
+      "instruction": "Choose the most correct candidate, reconcile any discrepancies, and write the final answer. Include the exact expression for the speed, the assumptions, and its small-angle form. Do not mention the workflow or candidates in the answer.",
+      "access_list": ["question", "candidate_energy", "candidate_dynamics", "candidate_check"]
+    }
+  ]
+}

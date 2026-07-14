@@ -1,0 +1,31 @@
+{
+  "task_type": "theoretical_physics_general_relativity",
+  "difficulty": "hard",
+  "question": "Consider a five-dimensional spacetime with metric ds^2=e^{2A(y)}(g_{mu nu}(x)dx^mu dx^nu+dy^2), where y is periodic with period 2pi, A(y)=a cos(y), and g_{mu nu} is a four-dimensional Einstein metric. For a transverse-traceless spin-2 perturbation h_{mu nu}(x,y)=epsilon_{mu nu}(x)psi(y), derive the one-dimensional eigenvalue equation for psi(y), identify the appropriate periodic boundary condition, and explain how the lowest eigenvalue is related to the mass of the four-dimensional mode. State any convention-dependent curvature shift explicitly rather than silently assuming flat four-dimensional slices.",
+  "workflow": [
+    {
+      "step_id": "derive_sturm_liouville",
+      "model_id": 0,
+      "instruction": "Derive the separated spin-2 fluctuation equation from the linearized Einstein equations for the warped metric. Put the y-dependent equation in a clear Sturm-Liouville or Schroedinger form, define the eigenvalue convention, and impose periodicity at y=0 and y=2pi.",
+      "access_list": ["question"]
+    },
+    {
+      "step_id": "independent_derivation",
+      "model_id": 1,
+      "instruction": "Work out the same Kaluza-Klein reduction independently. Check the warp-factor derivatives, the measure appearing in the inner product, and whether a field redefinition changes the apparent potential. Explain which expression is invariant under the choice of wavefunction normalization.",
+      "access_list": ["question"]
+    },
+    {
+      "step_id": "physics_adjudication",
+      "model_id": 2,
+      "instruction": "Compare the two derivations. Adjudicate signs, powers of e^A, boundary conditions, and the relation between the separated eigenvalue and the four-dimensional mass, including the possible curvature shift for an Einstein but non-flat g_{mu nu}. Flag claims that cannot be fixed without specifying the curvature convention.",
+      "access_list": ["question", "derive_sturm_liouville", "independent_derivation"]
+    },
+    {
+      "step_id": "final",
+      "model_id": 3,
+      "instruction": "Synthesize a rigorous final response using the derivations and adjudication. Present one consistent eigenvalue equation with definitions, the periodic boundary condition, and the mass/eigenvalue relation. Mention convention-dependent alternatives briefly where necessary, and do not invent a numerical spectrum that the question does not request.",
+      "access_list": ["question", "derive_sturm_liouville", "independent_derivation", "physics_adjudication"]
+    }
+  ]
+}

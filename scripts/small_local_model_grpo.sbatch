@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=theo-small-vllm
+#SBATCH --job-name=conductor-grpo
+#SBATCH --partition=train
+#SBATCH --time=24:00:00
 #SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=64
+#SBATCH --cpus-per-task=96
 #SBATCH --mem=0
-#SBATCH --gres=gpu:6
-#SBATCH --time=04:00:00
+#SBATCH --gres=gpu:8
 #SBATCH --output=slurm_logs/%x-%j.out
 #SBATCH --error=slurm_logs/%x-%j.err
 
-# Download configs/local_small_models.yaml to node-local storage, launch one vLLM
-# endpoint per entry, and exercise the same ModelRegistry client used by the app.
+# Run the three worker vLLM servers and the GRPO conductor training process on
+# one 8xH200 node. Workers use GPUs 0-5; GRPO uses GPUs 6-7.
 #
 # Submit from the repository root:
-#   sbatch scripts/slurm_local_small_models.sbatch
+#   sbatch scripts/slurm_grpo_single_node.sbatch
 #
 # Site-specific examples:
-#   VLLM_ENV=/path/to/venv sbatch scripts/slurm_local_small_models.sbatch
-#   sbatch --gres=gpu:6 --export=ALL,MODEL_GPU_SETS=0,1\;2,3\;4,5,MODEL_TP_SIZES=2\;2\;2
+#   VLLM_ENV=/path/to/venv sbatch scripts/slurm_grpo_single_node.sbatch
+#   TRAIN_EXTRA_ARGS='--max-steps 10 --wandb-run-name smoke' \
+#     sbatch scripts/slurm_grpo_single_node.sbatch
 
 set -Eeuo pipefail
 
@@ -30,17 +31,18 @@ VLLM_EXTRA_ARGS="${VLLM_EXTRA_ARGS:-}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
 KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-}"
 KILL_EXISTING_PORTS="${KILL_EXISTING_PORTS:-0}"
+TRAIN_GPUS="${TRAIN_GPUS:-6,7}"
+TRAIN_OUTPUT_DIR="${TRAIN_OUTPUT_DIR:-${REPO_ROOT}/outputs/grpo-${SLURM_JOB_ID:-manual}}"
+WANDB_PROJECT="${WANDB_PROJECT:-theo-conductor}"
+TRAIN_EXTRA_ARGS="${TRAIN_EXTRA_ARGS:-}"
 
-# The cluster-wide Hugging Face cache is not writable for this account. Keep
-# metadata, Xet logs, and transformer cache files in the user's writable home.
 export HF_HOME="${THEO_HF_HOME:-/mnt/data/home/arjun/.cache/huggingface}"
 export HF_HUB_CACHE="${THEO_HF_HUB_CACHE:-${HF_HOME}/hub}"
 export TRANSFORMERS_CACHE="${THEO_TRANSFORMERS_CACHE:-${HF_HOME}/transformers}"
 export HF_XET_CACHE="${THEO_HF_XET_CACHE:-${HF_HOME}/xet}"
 
-# One endpoint per model: 2 GPUs per 32B model. Qwen's shorter 32k context
-# does not require four H200s; two provides tensor-parallel headroom and throughput.
-# Values are semicolon-separated and must follow the YAML model order.
+# Two GPUs per 32B worker. The conductor training process uses the remaining
+# two H200s and runs its own vLLM generation backend there.
 MODEL_GPU_SETS="${MODEL_GPU_SETS:-0,1;2,3;4,5}"
 MODEL_TP_SIZES="${MODEL_TP_SIZES:-2;2;2}"
 
@@ -58,7 +60,6 @@ mkdir -p "$LOCAL_ROOT" "$LOG_ROOT" "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE" "$HF_XE
 IFS=';' read -r -a GPU_SETS <<< "$MODEL_GPU_SETS"
 IFS=';' read -r -a TP_SIZES <<< "$MODEL_TP_SIZES"
 
-# Fields: port, served/source name, context length from the client config.
 mapfile -t MODEL_ROWS < <(python - "$CONFIG" <<'PY'
 import sys
 from urllib.parse import urlparse
@@ -74,13 +75,10 @@ PY
 )
 
 if (( ${#MODEL_ROWS[@]} != ${#GPU_SETS[@]} || ${#MODEL_ROWS[@]} != ${#TP_SIZES[@]} )); then
-  echo "MODEL_GPU_SETS and MODEL_TP_SIZES must each have ${#MODEL_ROWS[@]} semicolon-separated entries" >&2
+  echo "MODEL_GPU_SETS and MODEL_TP_SIZES must each have ${#MODEL_ROWS[@]} entries" >&2
   exit 2
 fi
 
-# Avoid downloading several large models before discovering a stale listener.
-# Set KILL_EXISTING_PORTS=1 only when the listeners are known to be stale
-# processes owned by this job/user.
 port_is_busy() {
   python - "$1" <<'PY'
 import socket
@@ -98,20 +96,14 @@ finally:
 PY
 }
 
-for port in "${MODEL_ROWS[@]}"; do
-  IFS=$'\t' read -r port _ _ <<< "$port"
+for row in "${MODEL_ROWS[@]}"; do
+  IFS=$'\t' read -r port _ _ <<< "$row"
   if port_is_busy "$port"; then
     if [[ "$KILL_EXISTING_PORTS" == "1" ]] && command -v fuser >/dev/null; then
-      echo "Port $port is busy; terminating its existing listener because KILL_EXISTING_PORTS=1"
       fuser -k -TERM "${port}/tcp" || true
       sleep 2
-      if port_is_busy "$port"; then
-        echo "Port $port is still busy after termination; refusing to start." >&2
-        exit 2
-      fi
     else
-      echo "Port $port is already in use. Stop the existing listener or resubmit with KILL_EXISTING_PORTS=1 after verifying it is stale." >&2
-      command -v lsof >/dev/null && lsof -nP -iTCP:"$port" -sTCP:LISTEN >&2 || true
+      echo "Port $port is already in use; refusing to start." >&2
       exit 2
     fi
   fi
@@ -140,26 +132,27 @@ download() {
 }
 
 declare -a PORTS SERVED_NAMES MODEL_PATHS CONTEXT_LENGTHS
-for i in "${!MODEL_ROWS[@]}"; do
-  IFS=$'\t' read -r port served context_length <<< "${MODEL_ROWS[$i]}"
+for row in "${MODEL_ROWS[@]}"; do
+  IFS=$'\t' read -r port served context_length <<< "$row"
   model_dir="${LOCAL_ROOT}/$(tr '/' '_' <<< "$served")"
   download "$served" "$model_dir"
-  PORTS+=("$port"); SERVED_NAMES+=("$served"); MODEL_PATHS+=("$model_dir"); CONTEXT_LENGTHS+=("$context_length")
+  PORTS+=("$port")
+  SERVED_NAMES+=("$served")
+  MODEL_PATHS+=("$model_dir")
+  CONTEXT_LENGTHS+=("$context_length")
 done
 
 for i in "${!MODEL_ROWS[@]}"; do
-  base_served_name="${SERVED_NAMES[$i]}"
   args=(serve "${MODEL_PATHS[$i]}" --host 127.0.0.1 --port "${PORTS[$i]}"
-        --served-model-name "$base_served_name"
+        --served-model-name "${SERVED_NAMES[$i]}"
         --tensor-parallel-size "${TP_SIZES[$i]}"
         --max-model-len "${CONTEXT_LENGTHS[$i]}"
         --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION")
   [[ -n "$KV_CACHE_DTYPE" ]] && args+=(--kv-cache-dtype "$KV_CACHE_DTYPE")
-  # Intentional word splitting permits a site to append multiple vLLM flags.
   # shellcheck disable=SC2206
   extra=( $VLLM_EXTRA_ARGS )
-  echo "Starting ${SERVED_NAMES[$i]} on GPU(s) ${GPU_SETS[$i]}, port ${PORTS[$i]}"
   log_name="${SERVED_NAMES[$i]//\//_}"
+  echo "Starting ${SERVED_NAMES[$i]} on GPU(s) ${GPU_SETS[$i]}, port ${PORTS[$i]}"
   CUDA_VISIBLE_DEVICES="${GPU_SETS[$i]}" vllm "${args[@]}" "${extra[@]}" \
     >"${LOG_ROOT}/${log_name}.log" 2>&1 &
   PIDS+=("$!")
@@ -190,7 +183,7 @@ PY
   echo "Ready: ${SERVED_NAMES[$i]}"
 done
 
-echo "Running end-to-end ModelRegistry smoke test"
+echo "Running worker ModelRegistry smoke test"
 PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" python - "$CONFIG" <<'PY'
 import asyncio
 import sys
@@ -213,4 +206,15 @@ async def main():
 asyncio.run(main())
 PY
 
-echo "All configured models and the theo-conductor client pipeline passed. Logs: $LOG_ROOT"
+echo "Starting GRPO training on GPU(s) ${TRAIN_GPUS}"
+train_extra=(--use-vllm --wandb-project "$WANDB_PROJECT")
+# shellcheck disable=SC2206
+train_extra+=( $TRAIN_EXTRA_ARGS )
+CUDA_VISIBLE_DEVICES="$TRAIN_GPUS" \
+  PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
+  python -m theo_conductor.train \
+    --config-path "$CONFIG" \
+    --output-dir "$TRAIN_OUTPUT_DIR" \
+    "${train_extra[@]}"
+
+echo "GRPO training completed. Output: $TRAIN_OUTPUT_DIR"

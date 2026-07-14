@@ -15,8 +15,5 @@ wheels/
 # Data
 data/
 
-# Model weights
-/models/
-
-# Papers
-*.pdf
+# SLURM Logs
+slurm_logs/

@@ -1,23 +1,35 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any
 
 from datasets import Dataset
 from dotenv import load_dotenv
+import torch
 from transformers import AutoProcessor, AutoTokenizer
 from trl.trainer.grpo_config import GRPOConfig
 
-from theo_conductor.data import build_training_dataset
-from theo_conductor.grpo import build_grpo_trainer
+from theo_conductor.data import build_megascience_splits, build_training_dataset
+from theo_conductor.grpo import (
+    CORRECT_REWARD,
+    INVALID_WORKFLOW_REWARD,
+    MALFORMED_REWARD,
+    VALID_WORKFLOW_REWARD,
+    RewardTrace,
+    build_grpo_trainer,
+    compute_reward,
+    parse_conductor_json,
+)
 from theo_conductor.models.registry import ModelRegistry
 from theo_conductor.prompt import build_conductor_prompt
 
 load_dotenv()
 
 
-DEFAULT_MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
+DEFAULT_MODEL_NAME = "Qwen/Qwen3.5-9B"
 DEFAULT_OUTPUT_DIR = "outputs/grpo-conductor"
 
 
@@ -25,7 +37,7 @@ DEFAULT_OUTPUT_DIR = "outputs/grpo-conductor"
 class TrainConfig:
     model_name: str = DEFAULT_MODEL_NAME
     output_dir: str = DEFAULT_OUTPUT_DIR
-    config_dir: str = "configs"
+    config_path: str = "configs/local_small_models.yaml"
     seed: int = 42
     max_train_samples: int | None = None
     max_steps: int = -1
@@ -35,13 +47,19 @@ class TrainConfig:
     learning_rate: float = 1e-6
     num_generations: int = 4
     max_completion_length: int = 512
+    max_context_length: int | None = None
+    validation_samples: int = 200
+    eval_steps: int = 100
     temperature: float = 0.9
     top_p: float = 0.95
     use_vllm: bool = False
     bf16: bool | None = None
     fp16: bool = False
-    report_to: str = "none"
+    report_to: str = "wandb"
+    wandb_project: str = "theo-conductor"
+    wandb_run_name: str | None = None
     dry_run: bool = False
+    preflight: bool = False
 
 
 def resolve_chat_template(processor: Any) -> str:
@@ -89,7 +107,7 @@ def prepare_grpo_dataset(
 
 
 def build_training_args(config: TrainConfig) -> GRPOConfig:
-    return GRPOConfig(
+    training_kwargs = dict(
         output_dir=config.output_dir,
         seed=config.seed,
         max_steps=config.max_steps,
@@ -102,11 +120,21 @@ def build_training_args(config: TrainConfig) -> GRPOConfig:
         temperature=config.temperature,
         top_p=config.top_p,
         use_vllm=config.use_vllm,
-        bf16=config.bf16,
-        fp16=config.fp16,
         report_to=config.report_to,
+        run_name=config.wandb_run_name,
+        eval_strategy="no" if config.preflight else "steps",
+        eval_steps=config.eval_steps,
+        save_strategy="steps",
+        save_steps=1 if config.preflight else 500,
         remove_unused_columns=False,
     )
+    # Leave precision at the TRL/Transformers default when the operator did
+    # not explicitly select one; passing None can be interpreted as True by
+    # some installed Transformers versions.
+    training_kwargs["bf16"] = config.bf16 if config.bf16 is not None else torch.cuda.is_available()
+    if config.fp16:
+        training_kwargs["fp16"] = True
+    return GRPOConfig(**training_kwargs)
 
 
 def load_processing_class(model_name: str):
@@ -117,12 +145,20 @@ def load_processing_class(model_name: str):
 
 
 def build_trainer(config: TrainConfig):
-    model_registry = ModelRegistry.from_config_dir(config.config_dir)
+    if config.report_to == "wandb":
+        os.environ.setdefault("WANDB_PROJECT", config.wandb_project)
+    model_registry = ModelRegistry.from_yaml_file(config.config_path)
+    splits = build_megascience_splits(
+        seed=config.seed,
+        total_samples=2_000,
+        validation_samples=config.validation_samples,
+    )
     train_dataset = prepare_grpo_dataset(
-        build_training_dataset(seed=config.seed),
+        splits["train"],
         model_registry,
         max_samples=config.max_train_samples,
     )
+    eval_dataset = prepare_grpo_dataset(splits["test"], model_registry)
     processor = load_processing_class(config.model_name)
 
     return build_grpo_trainer(
@@ -131,6 +167,132 @@ def build_trainer(config: TrainConfig):
         processing_class=processor,
         args=build_training_args(config),
         model_registry=model_registry,
+        execute_workflows=True,
+        eval_dataset=eval_dataset,
+    )
+
+
+def _tokenizer_for(processing_class: Any) -> Any:
+    return getattr(processing_class, "tokenizer", processing_class)
+
+
+def _prompt_token_count(processing_class: Any, prompt: str) -> int:
+    encoded = _tokenizer_for(processing_class)(prompt, add_special_tokens=True)
+    input_ids = encoded["input_ids"] if isinstance(encoded, dict) else encoded.input_ids
+    shape = getattr(input_ids, "shape", None)
+    if shape:
+        return int(shape[-1])
+    return len(input_ids[0]) if input_ids and isinstance(input_ids[0], list) else len(input_ids)
+
+
+def _context_length(processing_class: Any, configured_length: int | None) -> int:
+    if configured_length is not None:
+        return configured_length
+
+    length = getattr(_tokenizer_for(processing_class), "model_max_length", None)
+    # Transformers uses very large sentinel values when a tokenizer does not
+    # advertise a real limit; require an explicit operator choice in that case.
+    if not isinstance(length, int) or length <= 0 or length >= 10**12:
+        raise ValueError("Tokenizer has no finite context length; pass --max-context-length.")
+    return length
+
+
+def _reward_tier_probe(registry: ModelRegistry) -> None:
+    valid_workflow = {
+        "task_type": "physics",
+        "difficulty": "medium",
+        "question": "What is 2 + 2?",
+        "workflow": [
+            {
+                "step_id": "final",
+                "model_id": registry.model_ids()[0],
+                "instruction": "Return the answer. End with FINAL: <answer>.",
+                "access_list": ["question"],
+            }
+        ],
+        "final_answer": "4",
+    }
+    invalid_workflow = {**valid_workflow, "workflow": [{**valid_workflow["workflow"][0], "step_id": "solve"}]}
+    valid_incorrect = {**valid_workflow, "final_answer": "5"}
+    rewards = compute_reward(
+        ["not json", invalid_workflow, valid_incorrect, valid_workflow],
+        ground_truth=["4"] * 4,
+        model_registry=registry,
+    )
+    expected = [MALFORMED_REWARD, INVALID_WORKFLOW_REWARD, VALID_WORKFLOW_REWARD, CORRECT_REWARD]
+    if rewards != expected:
+        raise RuntimeError(f"Reward tier probe failed: expected {expected}, got {rewards}.")
+
+
+def run_preflight(config: TrainConfig) -> None:
+    """Run one real, checkpointed GRPO update before starting a full training job."""
+    if not config.use_vllm:
+        raise ValueError("Preflight requires --use-vllm so conductor generation uses vLLM.")
+
+    registry = ModelRegistry.from_yaml_file(config.config_path)
+    raw_dataset = build_training_dataset(seed=config.seed, max_samples=2_000)
+    if len(raw_dataset) != 2_000:
+        raise RuntimeError(f"MegaScience preflight requires 2,000 rows, but loaded {len(raw_dataset)}.")
+    train_dataset = prepare_grpo_dataset(raw_dataset, registry)
+    processing_class = load_processing_class(config.model_name)
+    context_length = _context_length(processing_class, config.max_context_length)
+    longest_prompt = max(_prompt_token_count(processing_class, row["prompt"]) for row in train_dataset)
+    if longest_prompt + config.max_completion_length > context_length:
+        raise RuntimeError(
+            "MegaScience prompts exceed the selected context window: "
+            f"{longest_prompt} prompt tokens + {config.max_completion_length} completion tokens > {context_length}."
+        )
+
+    _reward_tier_probe(registry)
+
+    preflight_dir = Path(config.output_dir) / "preflight"
+    traces: list[RewardTrace] = []
+    preflight_config = replace(
+        config,
+        output_dir=str(preflight_dir),
+        max_train_samples=2,
+        max_steps=1,
+        num_train_epochs=1.0,
+        # Keep the generation batch divisible by num_generations when the
+        # preflight is launched as a single process (the Slurm default).
+        per_device_train_batch_size=2,
+        gradient_accumulation_steps=1,
+        # GRPO computes an advantage relative to the other completions for a
+        # prompt, so TRL requires at least two generations even for preflight.
+        num_generations=2,
+        report_to="none",
+        preflight=True,
+    )
+    args = build_training_args(preflight_config)
+    trainer = build_grpo_trainer(
+        model=config.model_name,
+        train_dataset=train_dataset.select(range(2)),
+        processing_class=processing_class,
+        args=args,
+        model_registry=registry,
+        execute_workflows=True,
+        trace_observer=traces.extend,
+    )
+    trainer.train()
+
+    if not traces:
+        raise RuntimeError("GRPO preflight completed without a conductor generation.")
+    generated = next((trace for trace in traces if trace.task is not None), None)
+    if generated is None:
+        raise RuntimeError(f"Conductor generation did not parse: {traces[0].error or 'unknown parse error'}")
+    # Parsing separately makes this guarantee explicit even if reward behavior changes.
+    parse_conductor_json(generated.completion, question=train_dataset[0]["question"], model_registry=registry)
+    if generated.run_result is None:
+        raise RuntimeError(f"Parsed workflow did not execute through a configured vLLM worker: {generated.error or 'no run result'}")
+    if any(registry.get(step.model_id).provider != "vllm" for step in generated.task.workflow):
+        raise RuntimeError("Parsed workflow used a non-vLLM worker; select a vLLM-only model config for preflight.")
+    if not any(preflight_dir.glob("checkpoint-*")):
+        raise RuntimeError(f"GRPO preflight did not save a checkpoint in {preflight_dir}.")
+
+    print(
+        "Preflight passed: 2,000 MegaScience rows, "
+        f"{longest_prompt}/{context_length} prompt+completion token budget, "
+        "parsed conductor workflow, vLLM execution, reward tiers, and checkpoint."
     )
 
 
@@ -138,7 +300,7 @@ def parse_args() -> TrainConfig:
     parser = argparse.ArgumentParser(description="Train the conductor with TRL GRPO.")
     parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--config-dir", default="configs")
+    parser.add_argument("--config-path", default="configs/local_small_models.yaml")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-train-samples", type=int)
     parser.add_argument("--max-steps", type=int, default=-1)
@@ -148,13 +310,19 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--learning-rate", type=float, default=1e-6)
     parser.add_argument("--num-generations", type=int, default=4)
     parser.add_argument("--max-completion-length", type=int, default=512)
+    parser.add_argument("--max-context-length", type=int)
+    parser.add_argument("--validation-samples", type=int, default=200)
+    parser.add_argument("--eval-steps", type=int, default=100)
     parser.add_argument("--temperature", type=float, default=0.9)
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--use-vllm", action="store_true")
     parser.add_argument("--bf16", action="store_true", default=None)
     parser.add_argument("--fp16", action="store_true")
-    parser.add_argument("--report-to", default="none")
+    parser.add_argument("--report-to", default="wandb")
+    parser.add_argument("--wandb-project", default="theo-conductor")
+    parser.add_argument("--wandb-run-name")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--preflight", action="store_true")
 
     args = parser.parse_args()
     return TrainConfig(**vars(args))
@@ -162,26 +330,16 @@ def parse_args() -> TrainConfig:
 
 def main() -> None:
     config = parse_args()
-    model_registry = ModelRegistry.from_config_dir(config.config_dir)
-    train_dataset = prepare_grpo_dataset(
-        build_training_dataset(seed=config.seed),
-        model_registry,
-        max_samples=config.max_train_samples,
-    )
-
-    if config.dry_run:
-        print(f"Prepared {len(train_dataset)} training examples.")
-        print(train_dataset[0]["prompt"])
+    if config.report_to == "wandb":
+        os.environ.setdefault("WANDB_PROJECT", config.wandb_project)
+    if config.dry_run or config.preflight:
+        run_preflight(config)
         return
 
-    processor = load_processing_class(config.model_name)
-    trainer = build_grpo_trainer(
-        model=config.model_name,
-        train_dataset=train_dataset,
-        processing_class=processor,
-        args=build_training_args(config),
-        model_registry=model_registry,
-    )
+    # A real end-to-end check is deliberately run before an unconstrained job;
+    # use --preflight to run it on its own.
+    run_preflight(config)
+    trainer = build_trainer(config)
     trainer.train()
 
 

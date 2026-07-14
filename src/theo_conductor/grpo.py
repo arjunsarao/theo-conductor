@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -21,6 +22,13 @@ MALFORMED_REWARD = 0.0
 INVALID_WORKFLOW_REWARD = 0.2
 VALID_WORKFLOW_REWARD = 0.5
 CORRECT_REWARD = 1.0
+
+# This small, explicit protocol lets reward/evaluation code pull an answer out
+# of a verbose worker response without guessing which sentence is the answer.
+FINAL_ANSWER_MARKER = "FINAL:"
+_FINAL_ANSWER_MARKER_RE = re.compile(r"(?im)^\s*final\s*(?:answer\s*)?:\s*(.+?)\s*$")
+_NUMBER_RE = re.compile(r"(?<![\w.])[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?(?![\w.])")
+_SAFE_SYMBOLIC_RE = re.compile(r"^[0-9A-Za-z_+\-*/^().,{}\\\s]+$")
 
 
 class ConductorParseError(ValueError):
@@ -42,6 +50,7 @@ def parse_conductor_json(
     *,
     question: str | None = None,
     model_registry: ModelRegistry | None = None,
+    require_final_answer: bool = True,
 ) -> Task:
     """Parse a conductor completion into a validated ``Task``.
 
@@ -70,6 +79,8 @@ def parse_conductor_json(
     try:
         task = Task.from_dict(data)
         validate_task(task, model_registry)
+        if require_final_answer:
+            _validate_final_answer_contract(task)
     except (KeyError, TypeError, ValueError, ValidationError) as exc:
         raise ConductorParseError(str(exc)) from exc
 
@@ -102,8 +113,9 @@ def compute_reward(
     - ``0.5`` valid workflow but no correct final answer
     - ``1.0`` final answer matches the gold answer
 
-    Pass ``model_registry`` or ``runner`` in ``kwargs`` to execute workflows
-    during reward computation. Without a runner, valid workflows receive the
+    Reward calculation is structural by default and never calls worker models.
+    Set ``execute_workflows=True`` (and supply ``model_registry`` or ``runner``)
+    only for a small, explicit evaluation run. Valid workflows receive the
     structural reward unless the completion itself contains ``final_answer``.
     """
 
@@ -123,6 +135,7 @@ def compute_reward_traces(
     questions = _as_list(question_source, len(completions))
     gold_answers = _as_list(gold_source, len(completions))
     answer_types = _as_list(kwargs.get("answer_type"), len(completions))
+    execute_workflows = bool(kwargs.get("execute_workflows", False))
 
     traces: list[RewardTrace] = []
 
@@ -147,7 +160,7 @@ def compute_reward_traces(
         run_result: RunResult | None = None
         final_answer = _extract_embedded_final_answer(raw_payload)
 
-        if runner is not None or model_registry is not None:
+        if execute_workflows and (runner is not None or model_registry is not None):
             try:
                 run_result = _run_runner_sync(runner or Runner(model_registry), task)  # type: ignore[arg-type]
                 final_answer = _extract_final_answer(run_result)
@@ -191,16 +204,19 @@ def build_grpo_trainer(
     args: GRPOConfig | None = None,
     model_registry: ModelRegistry | None = None,
     runner: Runner | None = None,
+    execute_workflows: bool = False,
     reward_kwargs: dict[str, Any] | None = None,
     **trainer_kwargs: Any,
 ) -> GRPOTrainer:
     """Create a ``GRPOTrainer`` configured for conductor reward training."""
 
-    reward_kwargs = {
-        "model_registry": model_registry,
-        "runner": runner,
-        **(reward_kwargs or {}),
-    }
+    reward_kwargs = {"execute_workflows": execute_workflows, **(reward_kwargs or {})}
+    # Keep the registry for structural model-id validation, but do not give the
+    # reward permission to make network worker calls unless explicitly asked.
+    if model_registry is not None:
+        reward_kwargs.setdefault("model_registry", model_registry)
+    if runner is not None:
+        reward_kwargs.setdefault("runner", runner)
 
     def reward_func(completions: Sequence[Any], **kwargs: Any) -> list[float]:
         return compute_reward(completions, **reward_kwargs, **kwargs)
@@ -215,11 +231,28 @@ def build_grpo_trainer(
     )
 
 
-def answers_match(predicted: str, gold: str, *, answer_type: str | None = None) -> bool:
+def answers_match(
+    predicted: str,
+    gold: str,
+    *,
+    answer_type: str | None = None,
+    absolute_tolerance: float = 1e-6,
+    relative_tolerance: float = 1e-4,
+) -> bool:
     if answer_type == "multipleChoice":
         return _extract_choice(predicted) == _extract_choice(gold)
 
-    return _normalize_answer(predicted) == _normalize_answer(gold)
+    if _normalize_answer(predicted) == _normalize_answer(gold):
+        return True
+
+    predicted_number = _extract_single_number(predicted)
+    gold_number = _extract_single_number(gold)
+    if predicted_number is not None and gold_number is not None:
+        return abs(predicted_number - gold_number) <= absolute_tolerance + relative_tolerance * max(
+            abs(predicted_number), abs(gold_number)
+        )
+
+    return _symbolically_equivalent(predicted, gold)
 
 
 def _completion_to_text(completion: Any) -> str:
@@ -278,7 +311,87 @@ def _extract_final_answer(run_result: RunResult) -> str | None:
     final = run_result.outputs.get("final")
     if final is None or not final.text.strip():
         return None
-    return final.text
+    matches = _FINAL_ANSWER_MARKER_RE.findall(final.text)
+    return matches[-1].strip() if matches else None
+
+
+def _validate_final_answer_contract(task: Task) -> None:
+    """Require generated workflows to give the final worker an answer protocol."""
+
+    instruction = task.workflow[-1].instruction
+    if not re.search(r"\bfinal\s*:", instruction, re.IGNORECASE):
+        raise ValueError(
+            f"Final step instruction must require `{FINAL_ANSWER_MARKER} <answer>` so its output is extractable."
+        )
+
+
+def _extract_single_number(answer: str) -> float | None:
+    """Extract one finite decimal/scientific value from a short answer."""
+
+    text = _strip_answer_wrapper(answer)
+    fraction = re.fullmatch(r"\s*([+-]?\d+(?:\.\d+)?)\s*/\s*([+-]?\d+(?:\.\d+)?)\s*", text)
+    if fraction:
+        numerator, denominator = map(float, fraction.groups())
+        if denominator:
+            return numerator / denominator
+    # Common scientific notation emitted by models, e.g. 6.02 × 10^23.
+    text = re.sub(
+        r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*(?:×|x|\\\\times)\s*10\s*(?:\^|\*\*)\s*([+-]?\d+)",
+        r"\1e\2",
+        text,
+        flags=re.IGNORECASE,
+    )
+    numbers = _NUMBER_RE.findall(text.replace(",", ""))
+    if len(numbers) != 1:
+        return None
+    try:
+        value = float(numbers[0])
+    except ValueError:
+        return None
+    return value if value == value and value not in (float("inf"), float("-inf")) else None
+
+
+def _symbolically_equivalent(predicted: str, gold: str) -> bool:
+    """Compare safe elementary expressions with SymPy when it is available."""
+
+    try:
+        from sympy import E, pi, simplify, sympify
+    except ImportError:
+        return False
+
+    predicted_expression = _prepare_symbolic_expression(predicted)
+    gold_expression = _prepare_symbolic_expression(gold)
+    if predicted_expression is None or gold_expression is None:
+        return False
+
+    try:
+        locals_map = {"pi": pi, "e": E}
+        predicted_value = sympify(predicted_expression, locals=locals_map)
+        gold_value = sympify(gold_expression, locals=locals_map)
+        return bool(simplify(predicted_value - gold_value) == 0)
+    except (ArithmeticError, NameError, SyntaxError, TypeError, ValueError):
+        return False
+
+
+def _prepare_symbolic_expression(answer: str) -> str | None:
+    expression = _strip_answer_wrapper(answer)
+    expression = expression.strip("$ ")
+    expression = expression.replace("\\left", "").replace("\\right", "")
+    expression = expression.replace("\\pi", "pi").replace("\\cdot", "*").replace("×", "*")
+    expression = re.sub(r"\\sqrt\s*\{([^{}]+)\}", r"sqrt(\1)", expression)
+    expression = re.sub(r"\\frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}", r"(\1)/(\2)", expression)
+    expression = expression.replace("{", "(").replace("}", ")").replace("^", "**")
+    if not expression or not _SAFE_SYMBOLIC_RE.fullmatch(expression) or "__" in expression:
+        return None
+    return expression
+
+
+def _strip_answer_wrapper(answer: str) -> str:
+    text = answer.strip()
+    marker_matches = _FINAL_ANSWER_MARKER_RE.findall(text)
+    if marker_matches:
+        text = marker_matches[-1].strip()
+    return re.sub(r"^\s*(?:final\s+answer|answer)\s*[:=\-]\s*", "", text, flags=re.IGNORECASE)
 
 
 def _normalize_answer(answer: str) -> str:
@@ -318,4 +431,23 @@ def _run_runner_sync(runner: Runner, task: Task) -> RunResult:
     except RuntimeError:
         return asyncio.run(runner.run(task))
 
-    raise RuntimeError("Synchronous reward execution cannot run inside an active event loop.")
+    # TRL can invoke a reward from notebook/server contexts that already own an
+    # event loop. Run the optional evaluation in a separate thread in that case.
+    result: RunResult | None = None
+    error: BaseException | None = None
+
+    def run_in_thread() -> None:
+        nonlocal result, error
+        try:
+            result = asyncio.run(runner.run(task))
+        except BaseException as exc:  # Re-raise the worker failure in the caller.
+            error = exc
+
+    thread = threading.Thread(target=run_in_thread, daemon=True)
+    thread.start()
+    thread.join()
+    if error is not None:
+        raise error
+    if result is None:
+        raise RuntimeError("Runner thread completed without a result.")
+    return result

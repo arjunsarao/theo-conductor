@@ -54,7 +54,7 @@ def build_default_examples(model_registry: ModelRegistry) -> list[str]:
             {
                 "step_id": "final",
                 "model_id": model_ids[0],
-                "instruction": "Solve the problem and return only the final answer.",
+                "instruction": "Solve the problem. End with a separate line exactly formatted as FINAL: <answer>.",
                 "access_list": ["question"],
             }
         ],

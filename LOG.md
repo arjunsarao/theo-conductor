@@ -36,3 +36,15 @@ Today was generally working on the infrastructure surrounding the system, prepar
 - Fixed up `main.py`, added functionality to provide question to conductor from main.
 - Add tests
 - Improve logging
+
+## July 14th, 2026
+
+- Fixed env stuff so now I can launch the vLLM servers for the models.
+- Added more workflow examples to the prompt.
+- Added workflow viewer.
+- Added deterministic MegaScience train/validation splitting with a 2,000-example subset.
+- Added validation metrics and periodic evaluation to GRPO training.
+- Added Weights & Biases tracking and configuration options.
+- Added GRPO preflight checks for dataset size, context length, reward tiers, vLLM execution, and checkpoints.
+- Added explicit final-answer extraction and optional workflow execution during reward calculation.
+- Added numeric tolerance and symbolic equivalence checks for scientific answers.

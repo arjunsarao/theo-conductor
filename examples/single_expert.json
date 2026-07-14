@@ -1,0 +1,13 @@
+{
+  "task_type": "quantum_mechanics",
+  "difficulty": "medium",
+  "question": "A particle of mass m is in the one-dimensional harmonic-oscillator potential V(x)=(1/2)m omega^2 x^2. A weak perturbation V'(x)=lambda x^4 is added, with lambda>0. Using time-independent perturbation theory, find the ground-state energy through first order in lambda.",
+  "workflow": [
+    {
+      "step_id": "final",
+      "model_id": 0,
+      "instruction": "Solve the problem as a single expert. Derive the first-order correction from the harmonic-oscillator ground-state expectation value of x^4, keep all factors of hbar, m, and omega explicit, and state the result including the unperturbed ground-state energy. Briefly indicate the order in lambda being neglected.",
+      "access_list": ["question"]
+    }
+  ]
+}
