@@ -24,7 +24,10 @@ set -Eeuo pipefail
 
 REPO_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 CONFIG="${MODEL_CONFIG:-${REPO_ROOT}/configs/local_small_models.yaml}"
-LOCAL_ROOT="${LOCAL_MODEL_ROOT:-${SLURM_TMPDIR:-/local_scratch/${USER}/${SLURM_JOB_ID:-manual}}/theo-models}"
+# Defaults to persistent storage so models prepared with download_grpo_models.sh
+# survive between batch allocations. Set LOCAL_MODEL_ROOT to opt into node-local
+# staging for a particular job.
+LOCAL_ROOT="${LOCAL_MODEL_ROOT:-${THEO_MODEL_ROOT:-/mnt/data/home/arjun/.cache/theo-conductor/models}}"
 LOG_ROOT="${LOCAL_ROOT}/logs"
 READY_TIMEOUT="${READY_TIMEOUT:-1800}"
 VLLM_EXTRA_ARGS="${VLLM_EXTRA_ARGS:-}"

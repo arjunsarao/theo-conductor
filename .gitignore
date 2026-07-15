@@ -17,3 +17,6 @@ data/
 
 # SLURM Logs
 slurm_logs/
+
+# Outputs
+outputs/

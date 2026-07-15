@@ -4,7 +4,7 @@ import asyncio
 import json
 import re
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -206,6 +206,7 @@ def build_grpo_trainer(
     runner: Runner | None = None,
     execute_workflows: bool = False,
     reward_kwargs: dict[str, Any] | None = None,
+    trace_observer: Callable[[Sequence[RewardTrace]], Any] | None = None,
     **trainer_kwargs: Any,
 ) -> GRPOTrainer:
     """Create a ``GRPOTrainer`` configured for conductor reward training."""
@@ -219,7 +220,10 @@ def build_grpo_trainer(
         reward_kwargs.setdefault("runner", runner)
 
     def reward_func(completions: Sequence[Any], **kwargs: Any) -> list[float]:
-        return compute_reward(completions, **reward_kwargs, **kwargs)
+        traces = compute_reward_traces(completions, **reward_kwargs, **kwargs)
+        if trace_observer is not None:
+            trace_observer(traces)
+        return [trace.reward for trace in traces]
 
     return GRPOTrainer(
         model=model,

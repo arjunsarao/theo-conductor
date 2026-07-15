@@ -5,6 +5,7 @@ import pytest
 from theo_conductor.grpo import (
     ConductorParseError,
     answers_match,
+    build_grpo_trainer,
     compute_reward_traces,
     compute_reward,
     parse_conductor_json,
@@ -142,3 +143,28 @@ def test_reward_traces_include_the_executed_vllm_workflow_result():
     assert trace.reward == 1.0
     assert trace.task is not None
     assert trace.run_result is not None
+
+
+def test_build_grpo_trainer_keeps_trace_observer_out_of_trl_kwargs(monkeypatch):
+    captured: dict = {}
+
+    class StubTrainer:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("theo_conductor.grpo.GRPOTrainer", StubTrainer)
+    traces = []
+    trainer = build_grpo_trainer(
+        model="unused",
+        train_dataset=[],
+        args=object(),
+        trace_observer=traces.extend,
+    )
+
+    assert "trace_observer" not in captured
+    rewards = captured["reward_funcs"]([VALID_COMPLETION], ground_truth=["A"])
+
+    assert isinstance(trainer, StubTrainer)
+    assert rewards == [1.0]
+    assert len(traces) == 1
+    assert traces[0].reward == 1.0
