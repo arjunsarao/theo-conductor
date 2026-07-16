@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
+import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -60,6 +62,42 @@ class TrainConfig:
     wandb_run_name: str | None = None
     dry_run: bool = False
     preflight: bool = False
+    skip_preflight: bool = False
+
+
+def log_cuda_memory(stage: str) -> None:
+    """Emit concise allocator and device totals for memory debugging."""
+
+    if not torch.cuda.is_available():
+        print(f"CUDA_MEMORY stage={stage} cuda_available=false", flush=True)
+        return
+
+    visible_devices = os.getenv("CUDA_VISIBLE_DEVICES", "<unset>").split(",")
+    gib = 1024**3
+    for device in range(torch.cuda.device_count()):
+        free, total = torch.cuda.mem_get_info(device)
+        allocated = torch.cuda.memory_allocated(device)
+        reserved = torch.cuda.memory_reserved(device)
+        peak_allocated = torch.cuda.max_memory_allocated(device)
+        physical = visible_devices[device] if device < len(visible_devices) else "unknown"
+        print(
+            "CUDA_MEMORY "
+            f"stage={stage} logical_gpu={device} physical_gpu={physical} "
+            f"device_used_gib={(total - free) / gib:.2f} device_free_gib={free / gib:.2f} "
+            f"pytorch_allocated_gib={allocated / gib:.2f} "
+            f"pytorch_reserved_gib={reserved / gib:.2f} "
+            f"pytorch_peak_allocated_gib={peak_allocated / gib:.2f}",
+            flush=True,
+        )
+
+
+def run_isolated_preflight() -> None:
+    """Run preflight in a child process so all of its CUDA state dies with it."""
+
+    command = [sys.executable, "-m", "theo_conductor.train", *sys.argv[1:], "--preflight"]
+    print("Starting isolated GRPO preflight process", flush=True)
+    subprocess.run(command, check=True)
+    print("Isolated GRPO preflight process exited cleanly", flush=True)
 
 
 def resolve_chat_template(processor: Any) -> str:
@@ -322,7 +360,13 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--wandb-project", default="theo-conductor")
     parser.add_argument("--wandb-run-name")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--preflight", action="store_true")
+    preflight_mode = parser.add_mutually_exclusive_group()
+    preflight_mode.add_argument("--preflight", action="store_true", help="Run only the end-to-end preflight.")
+    preflight_mode.add_argument(
+        "--skip-preflight",
+        action="store_true",
+        help="Start full training immediately; use only after a separate preflight passed.",
+    )
 
     args = parser.parse_args()
     return TrainConfig(**vars(args))
@@ -333,14 +377,23 @@ def main() -> None:
     if config.report_to == "wandb":
         os.environ.setdefault("WANDB_PROJECT", config.wandb_project)
     if config.dry_run or config.preflight:
+        log_cuda_memory("before_preflight")
         run_preflight(config)
+        log_cuda_memory("after_preflight")
         return
 
-    # A real end-to-end check is deliberately run before an unconstrained job;
-    # use --preflight to run it on its own.
-    run_preflight(config)
+    # A child process gives CUDA/vLLM a hard lifetime boundary. Constructing
+    # both trainers in this process retained tens of GiB from preflight.
+    if not config.skip_preflight:
+        run_isolated_preflight()
+        log_cuda_memory("after_isolated_preflight")
     trainer = build_trainer(config)
-    trainer.train()
+    log_cuda_memory("after_full_trainer_build")
+    try:
+        trainer.train()
+    except torch.OutOfMemoryError:
+        log_cuda_memory("full_training_oom")
+        raise
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ from theo_conductor.train import (
     build_training_args,
     prepare_grpo_dataset,
     resolve_chat_template,
+    run_isolated_preflight,
 )
 
 
@@ -91,3 +92,16 @@ def test_build_training_args_maps_train_config_to_grpo_config():
     assert args.per_device_train_batch_size == 2
     assert args.num_generations == 2
     assert args.max_completion_length == 128
+
+
+def test_isolated_preflight_relaunches_training_in_a_child_process(monkeypatch):
+    calls = []
+    monkeypatch.setattr("sys.argv", ["train", "--max-steps", "10"])
+    monkeypatch.setattr("subprocess.run", lambda command, check: calls.append((command, check)))
+
+    run_isolated_preflight()
+
+    [(command, check)] = calls
+    assert command[1:3] == ["-m", "theo_conductor.train"]
+    assert command[3:] == ["--max-steps", "10", "--preflight"]
+    assert check is True

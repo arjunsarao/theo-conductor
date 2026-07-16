@@ -20,3 +20,6 @@ slurm_logs/
 
 # Outputs
 outputs/
+
+# Weights and Biases
+/wandb

@@ -38,6 +38,7 @@ TRAIN_GPUS="${TRAIN_GPUS:-6,7}"
 TRAIN_OUTPUT_DIR="${TRAIN_OUTPUT_DIR:-${REPO_ROOT}/outputs/grpo-${SLURM_JOB_ID:-manual}}"
 WANDB_PROJECT="${WANDB_PROJECT:-theo-conductor}"
 TRAIN_EXTRA_ARGS="${TRAIN_EXTRA_ARGS:-}"
+GPU_MEMORY_LOG_INTERVAL="${GPU_MEMORY_LOG_INTERVAL:-5}"
 
 export HF_HOME="${THEO_HF_HOME:-/mnt/data/home/arjun/.cache/huggingface}"
 export HF_HUB_CACHE="${THEO_HF_HUB_CACHE:-${HF_HOME}/hub}"
@@ -54,11 +55,11 @@ if [[ -n "${VLLM_ENV:-}" ]]; then
   source "${VLLM_ENV}/bin/activate"
 fi
 
-for command in python hf vllm curl; do
+for command in python hf vllm curl nvidia-smi; do
   command -v "$command" >/dev/null || { echo "Required command not found: $command" >&2; exit 2; }
 done
 [[ -f "$CONFIG" ]] || { echo "Model config not found: $CONFIG" >&2; exit 2; }
-mkdir -p "$LOCAL_ROOT" "$LOG_ROOT" "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE" "$HF_XET_CACHE"
+mkdir -p "$LOCAL_ROOT" "$LOG_ROOT" "$TRAIN_OUTPUT_DIR" "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE" "$HF_XET_CACHE"
 
 IFS=';' read -r -a GPU_SETS <<< "$MODEL_GPU_SETS"
 IFS=';' read -r -a TP_SIZES <<< "$MODEL_TP_SIZES"
@@ -113,9 +114,14 @@ for row in "${MODEL_ROWS[@]}"; do
 done
 
 PIDS=()
+GPU_MEMORY_MONITOR_PID=""
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
+  if [[ -n "$GPU_MEMORY_MONITOR_PID" ]]; then
+    kill "$GPU_MEMORY_MONITOR_PID" 2>/dev/null || true
+    wait "$GPU_MEMORY_MONITOR_PID" 2>/dev/null || true
+  fi
   if (( ${#PIDS[@]} )); then
     kill "${PIDS[@]}" 2>/dev/null || true
     wait "${PIDS[@]}" 2>/dev/null || true
@@ -123,6 +129,13 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT INT TERM
+
+if [[ "$GPU_MEMORY_LOG_INTERVAL" != "0" ]]; then
+  "${REPO_ROOT}/scripts/log_gpu_memory.sh" "$TRAIN_OUTPUT_DIR" "$GPU_MEMORY_LOG_INTERVAL" &
+  GPU_MEMORY_MONITOR_PID=$!
+  echo "GPU memory telemetry: ${TRAIN_OUTPUT_DIR}/gpu-memory.csv"
+  echo "Per-process GPU telemetry: ${TRAIN_OUTPUT_DIR}/gpu-process-memory.csv"
+fi
 
 download() {
   local repo_id=$1 destination=$2
