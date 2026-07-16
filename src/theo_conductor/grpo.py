@@ -39,6 +39,9 @@ class ConductorParseError(ValueError):
 class RewardTrace:
     completion: str
     reward: float
+    question: str | None = None
+    gold_answer: str | None = None
+    answer_type: str | None = None
     task: Task | None = None
     run_result: RunResult | None = None
     final_answer: str | None = None
@@ -148,13 +151,31 @@ def compute_reward_traces(
         try:
             raw_payload = _load_conductor_payload(completion_text)
         except ConductorParseError as exc:
-            traces.append(RewardTrace(completion=completion_text, reward=MALFORMED_REWARD, error=str(exc)))
+            traces.append(
+                RewardTrace(
+                    completion=completion_text,
+                    reward=MALFORMED_REWARD,
+                    question=question,
+                    gold_answer=gold_answer,
+                    answer_type=answer_type,
+                    error=str(exc),
+                )
+            )
             continue
 
         try:
             task = parse_conductor_json(raw_payload, question=question, model_registry=model_registry)
         except ConductorParseError as exc:
-            traces.append(RewardTrace(completion=completion_text, reward=INVALID_WORKFLOW_REWARD, error=str(exc)))
+            traces.append(
+                RewardTrace(
+                    completion=completion_text,
+                    reward=INVALID_WORKFLOW_REWARD,
+                    question=question,
+                    gold_answer=gold_answer,
+                    answer_type=answer_type,
+                    error=str(exc),
+                )
+            )
             continue
 
         run_result: RunResult | None = None
@@ -169,6 +190,9 @@ def compute_reward_traces(
                     RewardTrace(
                         completion=completion_text,
                         reward=INVALID_WORKFLOW_REWARD,
+                        question=question,
+                        gold_answer=gold_answer,
+                        answer_type=answer_type,
                         task=task,
                         error=str(exc),
                     )
@@ -187,6 +211,9 @@ def compute_reward_traces(
             RewardTrace(
                 completion=completion_text,
                 reward=reward,
+                question=question,
+                gold_answer=gold_answer,
+                answer_type=answer_type,
                 task=task,
                 run_result=run_result,
                 final_answer=final_answer,

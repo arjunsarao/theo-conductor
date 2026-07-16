@@ -48,3 +48,12 @@ Today was generally working on the infrastructure surrounding the system, prepar
 - Added GRPO preflight checks for dataset size, context length, reward tiers, vLLM execution, and checkpoints.
 - Added explicit final-answer extraction and optional workflow execution during reward calculation.
 - Added numeric tolerance and symbolic equivalence checks for scientific answers.
+
+## July 15th, 2026
+
+- Forgot to update but I was working on getting it all setup on SLURM.
+- The pipeline runs, did a few bug fixes.
+
+## July 16th, 2026
+
+- Added logging for raw conductor outputs and worker LLM responses.

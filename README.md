@@ -2,6 +2,24 @@
 
 Uses Sakana Fugu for model routing.
 
+## Training traces
+
+GRPO training reports normal trainer metrics to Weights & Biases by default
+under the `theo-conductor` project. Each reward batch also logs a
+`conductor/plans_and_worker_outputs` table containing the generated plan,
+worker responses, reward, final answer, and any execution error.
+
+The complete trace is always appended locally as JSONL, including the raw
+conductor completion and parsed JSON plan:
+
+```text
+<output-dir>/traces/plans-and-worker-outputs-rank-0.jsonl
+```
+
+Distributed runs write one file per rank. Set `--wandb-project` and
+`--wandb-run-name` to name the remote run, or use `--report-to none` to keep
+only the local trace.
+
 # TODO
 
 - Train the conductor on a single set of models using GRPO on the MegaScience Dataset

@@ -27,6 +27,7 @@ from theo_conductor.grpo import (
 )
 from theo_conductor.models.registry import ModelRegistry
 from theo_conductor.prompt import build_conductor_prompt
+from theo_conductor.traces import TrainingTraceLogger
 
 load_dotenv()
 
@@ -198,6 +199,10 @@ def build_trainer(config: TrainConfig):
     )
     eval_dataset = prepare_grpo_dataset(splits["test"], model_registry)
     processor = load_processing_class(config.model_name)
+    trace_logger = TrainingTraceLogger(
+        config.output_dir,
+        log_to_wandb=config.report_to == "wandb",
+    )
 
     return build_grpo_trainer(
         model=config.model_name,
@@ -207,6 +212,7 @@ def build_trainer(config: TrainConfig):
         model_registry=model_registry,
         execute_workflows=True,
         eval_dataset=eval_dataset,
+        trace_observer=trace_logger,
     )
 
 
@@ -285,6 +291,12 @@ def run_preflight(config: TrainConfig) -> None:
 
     preflight_dir = Path(config.output_dir) / "preflight"
     traces: list[RewardTrace] = []
+    trace_logger = TrainingTraceLogger(preflight_dir, log_to_wandb=False)
+
+    def observe_preflight_traces(batch: list[RewardTrace]) -> None:
+        traces.extend(batch)
+        trace_logger(batch)
+
     preflight_config = replace(
         config,
         output_dir=str(preflight_dir),
@@ -309,7 +321,7 @@ def run_preflight(config: TrainConfig) -> None:
         args=args,
         model_registry=registry,
         execute_workflows=True,
-        trace_observer=traces.extend,
+        trace_observer=observe_preflight_traces,
     )
     trainer.train()
 

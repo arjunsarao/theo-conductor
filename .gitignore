@@ -23,3 +23,6 @@ outputs/
 
 # Weights and Biases
 /wandb
+
+# Papers
+*.pdf
