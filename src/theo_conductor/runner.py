@@ -13,10 +13,16 @@ class Runner:
         model_registry: ModelRegistry,
         tool_registry=None,
         event_handler: Callable[[str, Step, StepOutput | None], None] | None = None,
+        max_worker_tokens: int = 4096,
+        worker_temperature: float = 0.2,
     ) -> None:
+        if max_worker_tokens <= 0:
+            raise ValueError("max_worker_tokens must be positive")
         self.model_registry = model_registry
         self.tool_registry = tool_registry
         self.event_handler = event_handler
+        self.max_worker_tokens = max_worker_tokens
+        self.worker_temperature = worker_temperature
 
     async def run(self, task: Task) -> RunResult:
         validate_task(task, self.model_registry)
@@ -46,8 +52,8 @@ class Runner:
             instruction=instruction,
             question=task.question,
             context=context,
-            max_tokens=getattr(step, "max_tokens", None),
-            temperature=getattr(step, "temperature", None),
+            max_tokens=self.max_worker_tokens,
+            temperature=self.worker_temperature,
         )
 
         output = StepOutput(

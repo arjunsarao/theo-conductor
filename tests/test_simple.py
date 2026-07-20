@@ -120,3 +120,24 @@ def test_runner_emits_step_events(fake_registry):
 
     assert [event[0] for event in events] == ["started", "completed"]
     assert events[1][2].step_id == "final"
+
+
+def test_runner_applies_worker_decoding_settings(fake_registry):
+    task = Task(
+        task_type="test",
+        difficulty=Difficulty.EASY,
+        question="Question?",
+        workflow=[
+            Step(
+                step_id="final",
+                model_idx=0,
+                instruction="Answer.",
+                access_list=["question"],
+            )
+        ],
+    )
+
+    asyncio.run(Runner(fake_registry, max_worker_tokens=4096, worker_temperature=0.2).run(task))
+
+    assert fake_registry.get(0).client.calls[0]["max_tokens"] == 4096
+    assert fake_registry.get(0).client.calls[0]["temperature"] == 0.2

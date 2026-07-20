@@ -64,4 +64,5 @@ Today was generally working on the infrastructure surrounding the system, prepar
 ## July 20th, 2026
 
 - Ported error analysis tool to streamlit.
-- Updating `max-completion-length` to 8192.
+- Modified system prompt to align more with the conductor paper.
+- Modified constants (LR, $\beta_1$, etc.) to align with the paper.

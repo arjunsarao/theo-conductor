@@ -94,6 +94,31 @@ def test_build_training_args_maps_train_config_to_grpo_config():
     assert args.max_completion_length == 128
 
 
+def test_paper_training_defaults_map_to_one_iteration_batch():
+    config = TrainConfig()
+    args = build_training_args(config)
+
+    assert config.model_name == "Qwen/Qwen2.5-7B"
+    assert args.max_steps == 200
+    assert args.per_device_train_batch_size == 1
+    assert args.gradient_accumulation_steps == 256
+    assert args.generation_batch_size == 256
+    assert args.num_generations == 64
+    assert args.generation_batch_size // args.num_generations == 4
+    assert args.max_completion_length == 1024
+    assert args.temperature == 1.0
+    assert args.learning_rate == 1e-6
+    assert str(args.lr_scheduler_type) == "SchedulerType.COSINE"
+    assert args.warmup_ratio == 0.03
+    assert args.adam_beta1 == 0.9
+    assert args.adam_beta2 == 0.999
+    assert args.epsilon == 0.2
+    assert args.beta == 0.0
+    assert args.sync_ref_model is False
+    assert config.max_worker_tokens == 4096
+    assert config.worker_temperature == 0.2
+
+
 def test_isolated_preflight_relaunches_training_in_a_child_process(monkeypatch):
     calls = []
     monkeypatch.setattr("sys.argv", ["train", "--max-steps", "10"])

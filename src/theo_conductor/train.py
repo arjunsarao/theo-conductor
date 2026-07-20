@@ -27,12 +27,13 @@ from theo_conductor.grpo import (
 )
 from theo_conductor.models.registry import ModelRegistry
 from theo_conductor.prompt import build_conductor_prompt
+from theo_conductor.runner import Runner
 from theo_conductor.traces import TrainingTraceLogger
 
 load_dotenv()
 
 
-DEFAULT_MODEL_NAME = "Qwen/Qwen3.5-9B"
+DEFAULT_MODEL_NAME = "Qwen/Qwen2.5-7B"
 DEFAULT_OUTPUT_DIR = "outputs/grpo-conductor"
 
 
@@ -43,18 +44,23 @@ class TrainConfig:
     config_path: str = "configs/local_small_models.yaml"
     seed: int = 42
     max_train_samples: int | None = None
-    max_steps: int = -1
+    max_steps: int = 200
     num_train_epochs: float = 1.0
-    per_device_train_batch_size: int = 4
-    gradient_accumulation_steps: int = 2
+    per_device_train_batch_size: int = 1
+    gradient_accumulation_steps: int = 256
     learning_rate: float = 1e-6
-    num_generations: int = 4
+    lr_scheduler_type: str = "cosine"
+    warmup_ratio: float = 0.03
+    num_generations: int = 64
+    generation_batch_size: int = 256
     max_completion_length: int = 1024
+    max_worker_tokens: int = 4096
+    worker_temperature: float = 0.2
     max_context_length: int | None = None
     validation_samples: int = 200
     eval_steps: int = 100
-    temperature: float = 0.9
-    top_p: float = 0.95
+    temperature: float = 1.0
+    top_p: float = 1.0
     use_vllm: bool = False
     bf16: bool | None = None
     fp16: bool = False
@@ -154,15 +160,25 @@ def build_training_args(config: TrainConfig) -> GRPOConfig:
         per_device_train_batch_size=config.per_device_train_batch_size,
         gradient_accumulation_steps=config.gradient_accumulation_steps,
         learning_rate=config.learning_rate,
+        lr_scheduler_type=config.lr_scheduler_type,
+        warmup_ratio=config.warmup_ratio,
+        optim="adamw_torch_fused",
+        adam_beta1=0.9,
+        adam_beta2=0.999,
         num_generations=config.num_generations,
+        generation_batch_size=config.generation_batch_size,
         max_completion_length=config.max_completion_length,
         temperature=config.temperature,
         top_p=config.top_p,
+        beta=0.0,
+        epsilon=0.2,
+        sync_ref_model=False,
         use_vllm=config.use_vllm,
         report_to=config.report_to,
         run_name=config.wandb_run_name,
         eval_strategy="no" if config.preflight else "steps",
         eval_steps=config.eval_steps,
+        per_device_eval_batch_size=64,
         save_strategy="steps",
         save_steps=1 if config.preflight else 500,
         remove_unused_columns=False,
@@ -210,6 +226,11 @@ def build_trainer(config: TrainConfig):
         processing_class=processor,
         args=build_training_args(config),
         model_registry=model_registry,
+        runner=Runner(
+            model_registry,
+            max_worker_tokens=config.max_worker_tokens,
+            worker_temperature=config.worker_temperature,
+        ),
         execute_workflows=True,
         eval_dataset=eval_dataset,
         trace_observer=trace_logger,
@@ -310,6 +331,7 @@ def run_preflight(config: TrainConfig) -> None:
         # GRPO computes an advantage relative to the other completions for a
         # prompt, so TRL requires at least two generations even for preflight.
         num_generations=2,
+        generation_batch_size=2,
         report_to="none",
         preflight=True,
     )
@@ -320,6 +342,11 @@ def run_preflight(config: TrainConfig) -> None:
         processing_class=processing_class,
         args=args,
         model_registry=registry,
+        runner=Runner(
+            registry,
+            max_worker_tokens=config.max_worker_tokens,
+            worker_temperature=config.worker_temperature,
+        ),
         execute_workflows=True,
         trace_observer=observe_preflight_traces,
     )
@@ -353,18 +380,40 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--config-path", default="configs/local_small_models.yaml")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-train-samples", type=int)
-    parser.add_argument("--max-steps", type=int, default=-1)
+    parser.add_argument("--max-steps", type=int, default=200)
     parser.add_argument("--num-train-epochs", type=float, default=1.0)
-    parser.add_argument("--per-device-train-batch-size", type=int, default=4)
-    parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
+    parser.add_argument("--per-device-train-batch-size", type=int, default=1)
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=256)
     parser.add_argument("--learning-rate", type=float, default=1e-6)
-    parser.add_argument("--num-generations", type=int, default=4)
-    parser.add_argument("--max-completion-length", type=int, default=1024)
+    parser.add_argument("--lr-scheduler-type", default="cosine")
+    parser.add_argument("--warmup-ratio", type=float, default=0.03)
+    parser.add_argument("--num-generations", type=int, default=64)
+    parser.add_argument("--generation-batch-size", type=int, default=256)
+    parser.add_argument(
+        "--max-conductor-completion-length",
+        "--max-completion-length",
+        dest="max_completion_length",
+        type=int,
+        default=1024,
+        help="Maximum generated tokens for the trainable conductor model (default: 1024).",
+    )
+    parser.add_argument(
+        "--max-worker-tokens",
+        type=int,
+        default=4096,
+        help="Maximum generated tokens for each worker-model workflow step (default: 4096).",
+    )
+    parser.add_argument(
+        "--worker-temperature",
+        type=float,
+        default=0.2,
+        help="Sampling temperature for worker-model workflow steps (default: 0.2).",
+    )
     parser.add_argument("--max-context-length", type=int)
     parser.add_argument("--validation-samples", type=int, default=200)
     parser.add_argument("--eval-steps", type=int, default=100)
-    parser.add_argument("--temperature", type=float, default=0.9)
-    parser.add_argument("--top-p", type=float, default=0.95)
+    parser.add_argument("--temperature", type=float, default=1.0)
+    parser.add_argument("--top-p", type=float, default=1.0)
     parser.add_argument("--use-vllm", action="store_true")
     parser.add_argument("--bf16", action="store_true", default=None)
     parser.add_argument("--fp16", action="store_true")

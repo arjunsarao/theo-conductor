@@ -28,14 +28,18 @@ PAGE_SIZE = 80
 REWARD_COLORS = {0.0: "#c94848", 0.2: "#e87817", 0.5: "#f2c94c", 1.0: "#318260"}
 DIFFICULTY_COLORS = {"easy": "#318260", "medium": "#f2c94c", "hard": "#c94848"}
 ERROR_STYLES = (
-    ("🔴", "#c94848"),
-    ("🟠", "#e87817"),
-    ("🟡", "#d0a91c"),
-    ("🟢", "#318260"),
-    ("🔵", "#287396"),
-    ("🟣", "#8b5fbf"),
-    ("🟤", "#8b6b4e"),
-    ("⚫", "#697b8c"),
+    ("🔴", "#e63946"),
+    ("🟠", "#f77f00"),
+    ("🟡", "#e9c46a"),
+    ("🟢", "#43aa8b"),
+    ("💚", "#2a9d8f"),
+    ("🔵", "#277da1"),
+    ("🟦", "#6c5ce7"),
+    ("🟣", "#9b5de5"),
+    ("🩷", "#f15bb5"),
+    ("🟤", "#8d6e63"),
+    ("⚫", "#577590"),
+    ("🩵", "#00b4d8"),
 )
 
 
@@ -259,7 +263,6 @@ def render_overview(dataset: TraceDataset, error_styles: dict[str, tuple[str, st
                     "reason": reason,
                     "label": f"{error_styles[reason][0]}  {reason}",
                     "count": count,
-                    "color": error_styles[reason][1],
                 }
                 for reason, count in failures.most_common()
             ]
@@ -275,7 +278,14 @@ def render_overview(dataset: TraceDataset, error_styles: dict[str, tuple[str, st
                         sort="-x",
                         axis=alt.Axis(labelLimit=520),
                     ),
-                    color=alt.Color("color:N", scale=None, legend=None),
+                    color=alt.Color(
+                        "reason:N",
+                        scale=alt.Scale(
+                            domain=list(error_styles),
+                            range=[style[1] for style in error_styles.values()],
+                        ),
+                        legend=None,
+                    ),
                     tooltip=[alt.Tooltip("reason:N", title="Reason"), alt.Tooltip("count:Q", title="Records")],
                 )
             )

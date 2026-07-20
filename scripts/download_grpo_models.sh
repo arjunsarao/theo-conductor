@@ -12,7 +12,7 @@ set -Eeuo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG="${MODEL_CONFIG:-${REPO_ROOT}/configs/local_small_models.yaml}"
 MODEL_ROOT="${THEO_MODEL_ROOT:-/mnt/data/home/arjun/.cache/theo-conductor/models}"
-CONDUCTOR_MODEL="${CONDUCTOR_MODEL:-Qwen/Qwen3.5-9B}"
+CONDUCTOR_MODEL="${CONDUCTOR_MODEL:-Qwen/Qwen2.5-7B}"
 INCLUDE_CONDUCTOR="${INCLUDE_CONDUCTOR:-1}"
 
 if [[ -n "${VLLM_ENV:-}" ]]; then

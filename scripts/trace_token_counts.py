@@ -15,7 +15,7 @@ from pathlib import Path
 from transformers import AutoTokenizer
 
 
-DEFAULT_MODEL = "Qwen/Qwen3.5-9B"
+DEFAULT_MODEL = "Qwen/Qwen2.5-7B"
 DEFAULT_LIMIT = 1024
 
 
