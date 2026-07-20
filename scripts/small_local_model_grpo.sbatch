@@ -223,7 +223,7 @@ asyncio.run(main())
 PY
 
 echo "Starting GRPO training on GPU(s) ${TRAIN_GPUS}"
-train_extra=(--use-vllm --wandb-project "$WANDB_PROJECT")
+train_extra=(--use-vllm --execute-workflows --wandb-project "$WANDB_PROJECT")
 # shellcheck disable=SC2206
 train_extra+=( $TRAIN_EXTRA_ARGS )
 CUDA_VISIBLE_DEVICES="$TRAIN_GPUS" \

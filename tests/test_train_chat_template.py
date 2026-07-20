@@ -7,6 +7,7 @@ from theo_conductor.train import (
     TrainConfig,
     build_conductor_prompt,
     build_training_args,
+    parse_args,
     prepare_grpo_dataset,
     resolve_chat_template,
     run_isolated_preflight,
@@ -117,6 +118,13 @@ def test_paper_training_defaults_map_to_one_iteration_batch():
     assert args.sync_ref_model is False
     assert config.max_worker_tokens == 4096
     assert config.worker_temperature == 0.2
+    assert config.execute_workflows is False
+
+
+def test_worker_execution_is_cli_opt_in(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["train", "--execute-workflows"])
+
+    assert parse_args().execute_workflows is True
 
 
 def test_isolated_preflight_relaunches_training_in_a_child_process(monkeypatch):

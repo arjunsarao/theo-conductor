@@ -167,7 +167,7 @@ def test_validate_task_rejects_unknown_or_future_access_key():
         validate_task(task)
 
 
-def test_validate_task_rejects_non_final_last_step():
+def test_validate_task_accepts_any_name_for_last_step():
     task = make_task(
         [
             Step(
@@ -179,8 +179,22 @@ def test_validate_task_rejects_non_final_last_step():
         ]
     )
 
-    with pytest.raises(ValueError, match="Final workflow step must have step_id 'final'"):
-        validate_task(task)
+    validate_task(task)
+
+
+def test_validate_task_does_not_require_question_in_final_access_list():
+    task = make_task(
+        [
+            Step(
+                step_id="answer",
+                model_id="solver",
+                instruction="Write final.",
+                access_list=[],
+            )
+        ]
+    )
+
+    validate_task(task)
 
 
 def test_validate_task_requires_final_to_access_question_and_previous_steps():

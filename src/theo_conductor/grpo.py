@@ -306,11 +306,45 @@ def _completion_to_text(completion: Any) -> str:
 
 def _load_conductor_payload(text: str) -> Any:
     candidates = _json_candidates(text)
-    for candidate in candidates:
+    if not candidates:
+        raise ConductorParseError("Completion does not contain valid JSON.")
+    try:
+        return json.loads(candidates[0])
+    except json.JSONDecodeError:
+        pass
+
+    parsed_candidates: list[Any] = []
+    for candidate in candidates[1:]:
         try:
-            return json.loads(candidate)
+            parsed_candidates.append(json.loads(candidate))
         except json.JSONDecodeError:
             continue
+
+    # A completion can contain more than one JSON fragment (for example, an
+    # empty example object followed by the actual response).  The broad
+    # first-"{"/last-"}" candidate above cannot represent that situation, so
+    # scan for independently decodable conductor-shaped values.  Do not accept
+    # arbitrary embedded JSON: prose often contains incidental access lists.
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"[\[{]", text):
+        try:
+            payload, _ = decoder.raw_decode(text, match.start())
+        except json.JSONDecodeError:
+            continue
+        if _looks_like_conductor_payload(payload):
+            parsed_candidates.append(payload)
+
+    # Prefer an enclosing task object over a nested workflow array. This is
+    # important when prose or another JSON fragment makes the broad object
+    # candidate invalid but its inner workflow array remains valid JSON.
+    for payload in parsed_candidates:
+        if isinstance(payload, dict) and "workflow" in payload:
+            return payload
+    for payload in parsed_candidates:
+        if _looks_like_conductor_payload(payload):
+            return payload
+    if parsed_candidates:
+        return parsed_candidates[0]
     raise ConductorParseError("Completion does not contain valid JSON.")
 
 
@@ -329,6 +363,16 @@ def _json_candidates(text: str) -> list[str]:
     return list(dict.fromkeys(candidate for candidate in candidates if candidate))
 
 
+def _looks_like_conductor_payload(payload: Any) -> bool:
+    if isinstance(payload, dict):
+        return "workflow" in payload
+    return (
+        isinstance(payload, list)
+        and bool(payload)
+        and all(isinstance(step, dict) and "step_id" in step for step in payload)
+    )
+
+
 def _extract_embedded_final_answer(payload: Any) -> str | None:
     if isinstance(payload, dict):
         for key in ("final_answer", "answer", "final"):
@@ -339,7 +383,8 @@ def _extract_embedded_final_answer(payload: Any) -> str | None:
 
 
 def _extract_final_answer(run_result: RunResult) -> str | None:
-    final = run_result.outputs.get("final")
+    final_step_id = run_result.task.workflow[-1].step_id
+    final = run_result.outputs.get(final_step_id)
     if final is None or not final.text.strip():
         return None
     matches = _FINAL_ANSWER_MARKER_RE.findall(final.text)

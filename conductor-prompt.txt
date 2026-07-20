@@ -28,7 +28,7 @@ Rules:
 - ONLY generate the workflow.
 - Use between 1 and 5 workflow steps.
 - Every step must have a unique step_id.
-- The final workflow step MUST have step_id = "final".
+- The last workflow entry is always treated as the final step; its step_id may be any unique string.
 - The final step is responsible for producing the answer returned to the user.
 - The final worker should synthesize all relevant previous work into one final answer.
 - Keep workflows as small as possible while maintaining quality.

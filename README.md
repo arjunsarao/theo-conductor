@@ -84,6 +84,20 @@ Distributed runs write one file per rank. Set `--wandb-project` and
 `--wandb-run-name` to name the remote run, or use `--report-to none` to keep
 only the local trace.
 
+## Format-only GRPO
+
+Early-stage conductor training can score JSON parsing and workflow structure
+without starting or calling worker-model servers:
+
+```bash
+sbatch scripts/format_only_grpo.sbatch
+```
+
+This job requests two GPUs for conductor training. The worker registry is still
+used to build the prompt and validate generated `model_id` values. To execute
+worker workflows during rewards, use `scripts/small_local_model_grpo.sbatch`
+or pass `--execute-workflows` to `python -m theo_conductor.train`.
+
 # TODO
 
 - Train the conductor on a single set of models using GRPO on the MegaScience Dataset

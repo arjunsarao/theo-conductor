@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
@@ -21,7 +22,12 @@ from pathlib import Path
 from typing import Any
 
 
-def error_category(error: Any, *, completion_saturated: bool = False) -> str:
+def error_category(
+    error: Any,
+    *,
+    completion: Any = None,
+    completion_saturated: bool = False,
+) -> str:
     """Normalize verbose parser/validation errors into stable categories."""
     if not error:
         return "No execution/validation error"
@@ -36,10 +42,86 @@ def error_category(error: Any, *, completion_saturated: bool = False) -> str:
     )
     for needle, category in rules:
         if needle in value:
-            if needle == "Completion does not contain valid JSON" and completion_saturated:
-                return "Malformed: truncated at output token limit"
+            if needle == "Completion does not contain valid JSON":
+                return _malformed_json_category(
+                    completion,
+                    completion_saturated=completion_saturated,
+                )
             return category
     return value.splitlines()[0][:110]
+
+
+def _malformed_json_category(completion: Any, *, completion_saturated: bool) -> str:
+    if completion_saturated:
+        return "Malformed: truncated at output token limit"
+
+    text = "" if completion is None else str(completion).strip()
+    if not text:
+        # Keep the historical category when callers only have an error string.
+        return "Malformed: no valid JSON" if completion is None else "Malformed: empty completion"
+
+    if _contains_workflow_payload(text):
+        return "Malformed: valid workflow JSON embedded in extra text"
+    if "{" not in text and "[" not in text:
+        return "Malformed: prose only"
+    if re.search(r"[{,]\s*[A-Za-z_][\w.-]*\s*:", text):
+        return "Malformed: JSON-like syntax with unquoted keys"
+    if _has_unclosed_json_delimiter(text):
+        return "Malformed: incomplete or unclosed JSON"
+    if _contains_json_fragment(text):
+        return "Malformed: JSON fragments without a workflow"
+    return "Malformed: invalid JSON syntax"
+
+
+def _decoded_json_values(text: str) -> Iterable[Any]:
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"[\[{]", text):
+        try:
+            payload, _ = decoder.raw_decode(text, match.start())
+        except json.JSONDecodeError:
+            continue
+        yield payload
+
+
+def _contains_workflow_payload(text: str) -> bool:
+    return any(
+        (isinstance(payload, dict) and "workflow" in payload)
+        or (
+            isinstance(payload, list)
+            and bool(payload)
+            and all(isinstance(step, dict) and "step_id" in step for step in payload)
+        )
+        for payload in _decoded_json_values(text)
+    )
+
+
+def _contains_json_fragment(text: str) -> bool:
+    return next(iter(_decoded_json_values(text)), None) is not None
+
+
+def _has_unclosed_json_delimiter(text: str) -> bool:
+    """Check delimiter balance while ignoring braces inside JSON strings."""
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    pairs = {"}": "{", "]": "["}
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "[{":
+            stack.append(char)
+        elif char in "]}":
+            if stack and stack[-1] == pairs[char]:
+                stack.pop()
+    return bool(stack) or in_string
 
 
 def _number(value: Any) -> float | None:
@@ -183,7 +265,11 @@ class TraceDataset:
                         record_id=f"{source_index}:{line_number}",
                         source=str(path),
                         line=line_number,
-                        error_category=error_category(data.get("error"), completion_saturated=saturated is True),
+                        error_category=error_category(
+                            data.get("error"),
+                            completion=data.get("conductor_completion"),
+                            completion_saturated=saturated is True,
+                        ),
                         completion_tokens=tokens,
                         completion_saturated=saturated,
                     ))

@@ -59,11 +59,7 @@ def validate_task(task: Task, model_registry: ModelRegistry | None = None) -> No
         seen.add(step.step_id)
 
     final = task.workflow[-1]
-
-    if final.step_id != "final":
-        raise ValueError("Final workflow step must have step_id 'final'.")
-
-    required_final_access = {"question"} | {step.step_id for step in task.workflow[:-1]}
+    required_final_access = {step.step_id for step in task.workflow[:-1]}
 
     missing = required_final_access - set(final.access_list)
     if missing:

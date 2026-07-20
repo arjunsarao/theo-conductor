@@ -62,6 +62,7 @@ class TrainConfig:
     temperature: float = 1.0
     top_p: float = 1.0
     use_vllm: bool = False
+    execute_workflows: bool = False
     bf16: bool | None = None
     fp16: bool = False
     report_to: str = "wandb"
@@ -220,18 +221,23 @@ def build_trainer(config: TrainConfig):
         log_to_wandb=config.report_to == "wandb",
     )
 
+    runner = (
+        Runner(
+            model_registry,
+            max_worker_tokens=config.max_worker_tokens,
+            worker_temperature=config.worker_temperature,
+        )
+        if config.execute_workflows
+        else None
+    )
     return build_grpo_trainer(
         model=config.model_name,
         train_dataset=train_dataset,
         processing_class=processor,
         args=build_training_args(config),
         model_registry=model_registry,
-        runner=Runner(
-            model_registry,
-            max_worker_tokens=config.max_worker_tokens,
-            worker_temperature=config.worker_temperature,
-        ),
-        execute_workflows=True,
+        runner=runner,
+        execute_workflows=config.execute_workflows,
         eval_dataset=eval_dataset,
         trace_observer=trace_logger,
     )
@@ -336,18 +342,23 @@ def run_preflight(config: TrainConfig) -> None:
         preflight=True,
     )
     args = build_training_args(preflight_config)
+    runner = (
+        Runner(
+            registry,
+            max_worker_tokens=config.max_worker_tokens,
+            worker_temperature=config.worker_temperature,
+        )
+        if config.execute_workflows
+        else None
+    )
     trainer = build_grpo_trainer(
         model=config.model_name,
         train_dataset=train_dataset.select(range(2)),
         processing_class=processing_class,
         args=args,
         model_registry=registry,
-        runner=Runner(
-            registry,
-            max_worker_tokens=config.max_worker_tokens,
-            worker_temperature=config.worker_temperature,
-        ),
-        execute_workflows=True,
+        runner=runner,
+        execute_workflows=config.execute_workflows,
         trace_observer=observe_preflight_traces,
     )
     trainer.train()
@@ -359,17 +370,22 @@ def run_preflight(config: TrainConfig) -> None:
         raise RuntimeError(f"Conductor generation did not parse: {traces[0].error or 'unknown parse error'}")
     # Parsing separately makes this guarantee explicit even if reward behavior changes.
     parse_conductor_json(generated.completion, question=train_dataset[0]["question"], model_registry=registry)
-    if generated.run_result is None:
-        raise RuntimeError(f"Parsed workflow did not execute through a configured vLLM worker: {generated.error or 'no run result'}")
-    if any(registry.get(step.model_id).provider != "vllm" for step in generated.task.workflow):
-        raise RuntimeError("Parsed workflow used a non-vLLM worker; select a vLLM-only model config for preflight.")
+    if config.execute_workflows:
+        if generated.run_result is None:
+            raise RuntimeError(
+                "Parsed workflow did not execute through a configured vLLM worker: "
+                f"{generated.error or 'no run result'}"
+            )
+        if any(registry.get(step.model_id).provider != "vllm" for step in generated.task.workflow):
+            raise RuntimeError("Parsed workflow used a non-vLLM worker; select a vLLM-only model config for preflight.")
     if not any(preflight_dir.glob("checkpoint-*")):
         raise RuntimeError(f"GRPO preflight did not save a checkpoint in {preflight_dir}.")
 
+    execution_check = "vLLM worker execution, " if config.execute_workflows else "format-only reward, "
     print(
         "Preflight passed: 2,000 MegaScience rows, "
         f"{longest_prompt}/{context_length} prompt+completion token budget, "
-        "parsed conductor workflow, vLLM execution, reward tiers, and checkpoint."
+        f"parsed conductor workflow, {execution_check}reward tiers, and checkpoint."
     )
 
 
@@ -415,6 +431,11 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top-p", type=float, default=1.0)
     parser.add_argument("--use-vllm", action="store_true")
+    parser.add_argument(
+        "--execute-workflows",
+        action="store_true",
+        help="Execute generated workflows through worker models while scoring; disabled by default.",
+    )
     parser.add_argument("--bf16", action="store_true", default=None)
     parser.add_argument("--fp16", action="store_true")
     parser.add_argument("--report-to", default="wandb")

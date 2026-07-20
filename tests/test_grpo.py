@@ -42,6 +42,23 @@ def test_parse_conductor_json_accepts_fenced_json():
     assert task.workflow[0].step_id == "final"
 
 
+def test_parse_conductor_json_recovers_workflow_after_other_json_fragment():
+    completion = "Model output:\n{}\nAssistant:\n" + VALID_COMPLETION.replace("```json", "").replace("```", "")
+
+    task = parse_conductor_json(completion)
+
+    assert task.task_type == "physics"
+    assert task.workflow[0].step_id == "final"
+
+
+def test_parse_conductor_json_treats_last_entry_as_final_regardless_of_name():
+    completion = VALID_COMPLETION.replace('"step_id": "final"', '"step_id": "answer"')
+
+    task = parse_conductor_json(completion)
+
+    assert task.workflow[-1].step_id == "answer"
+
+
 def test_parse_conductor_json_rejects_invalid_workflow():
     with pytest.raises(ConductorParseError):
         parse_conductor_json('{"workflow": []}')

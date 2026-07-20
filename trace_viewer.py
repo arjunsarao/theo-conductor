@@ -397,7 +397,7 @@ def render_record(record: TraceRecord, error_styles: dict[str, tuple[str, str]])
             st.code(str(data.get("conductor_completion") or "(none)"))
 
 
-st.title("GRPO trace analysis")
+st.title("`theo-conductor` trace analysis")
 st.caption("Inspect reward cohorts, validation failures, conductor plans, and worker responses.")
 
 try:

@@ -45,7 +45,7 @@ class Runner:
         context = {key: outputs[key] for key in step.access_list if key in outputs}
 
         instruction = step.instruction
-        if step.step_id == "final" and "final:" not in instruction.lower():
+        if step.step_id == task.workflow[-1].step_id and "final:" not in instruction.lower():
             instruction = f"{instruction.rstrip()}\n\nEnd with a separate line exactly formatted as FINAL: <answer>."
 
         response = await spec.client.generate(

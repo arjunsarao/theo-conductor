@@ -65,9 +65,10 @@ class CliConsole:
         self.log("✓", f"{step.step_id}{latency}", color="green")
 
     def result(self, result: RunResult, elapsed: float) -> None:
-        final = result.outputs.get("final")
+        final_step_id = result.task.workflow[-1].step_id
+        final = result.outputs.get(final_step_id)
         if final is None:
-            raise ValueError("Workflow completed without a 'final' output")
+            raise ValueError(f"Workflow completed without output from its last step {final_step_id!r}")
 
         if self.quiet:
             self.out.print(final.text.strip(), markup=False)

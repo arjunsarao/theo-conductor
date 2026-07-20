@@ -34,6 +34,12 @@ def _write_trace(tmp_path):
 def test_error_category_matches_viewer_categories():
     assert error_category("Completion does not contain valid JSON: x") == "Malformed: no valid JSON"
     assert error_category("Completion does not contain valid JSON: x", completion_saturated=True) == "Malformed: truncated at output token limit"
+    assert error_category("Completion does not contain valid JSON: x", completion="") == "Malformed: empty completion"
+    assert error_category("Completion does not contain valid JSON: x", completion="plain prose") == "Malformed: prose only"
+    assert error_category("Completion does not contain valid JSON: x", completion='{task_type: "math"}') == "Malformed: JSON-like syntax with unquoted keys"
+    assert error_category("Completion does not contain valid JSON: x", completion='prefix {"workflow": [') == "Malformed: incomplete or unclosed JSON"
+    assert error_category("Completion does not contain valid JSON: x", completion='prefix ["question"] suffix') == "Malformed: JSON fragments without a workflow"
+    assert error_category("Completion does not contain valid JSON: x", completion='{} then {"workflow": []}') == "Malformed: valid workflow JSON embedded in extra text"
     assert error_category(None) == "No execution/validation error"
 
 
