@@ -20,7 +20,11 @@ dependencies = [
     "sympy>=1.13,<2",
     "colorama>=0.4.6",
     "wandb>=0.19.0",
+    "streamlit>=1.59.2",
 ]
+
+[project.scripts]
+theo-trace = "theo_conductor.trace_analysis:main"
 
 [[tool.uv.index]]
 name = "vllm-cu129"

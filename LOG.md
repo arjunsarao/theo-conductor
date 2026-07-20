@@ -57,3 +57,11 @@ Today was generally working on the infrastructure surrounding the system, prepar
 ## July 16th, 2026
 
 - Added logging for raw conductor outputs and worker LLM responses.
+- Implemented error analysis tools for me + AI.
+- Ran initial GRPO run on 220 unique questions.
+- Updated `max-completion-length` to 1024 (up from 512) because around 202/271 malformed-JSON failures were due to this.
+
+## July 20th, 2026
+
+- Ported error analysis tool to streamlit.
+- Updating `max-completion-length` to 8192.

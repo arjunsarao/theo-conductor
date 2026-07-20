@@ -5,7 +5,7 @@
   "workflow": [
   {
     "step_id": "derive",
-    "model_id": "strong_physics_model",
+    "model_id": 0,
     "instruction": "Derive the main solution to the problem.",
     "access_list": ["question"],
     "needs_tools": false
@@ -13,7 +13,7 @@
   },
   {
     "step_id": "algebraic_check",
-    "model_id": "strong_math_model",
+    "model_id": 1,
     "instruction": "Check the derivation for algebraic mistakes, missing factors, sign errors, and invalid transformations.",
     "access_list": ["question", "derive"],
     "needs_tools": false
@@ -21,14 +21,14 @@
   },
   {
     "step_id": "units_check",
-    "model_id": "math_verifier",
+    "model_id": 2,
     "instruction": "Check the derivation using dimensional analysis, limiting cases, physical assumptions, and consistency with known results.",
     "access_list": ["question", "derive"],
     "needs_tools": false
   },
   {
     "step_id": "final",
-    "model_id": "answer_synthesizer",
+    "model_id": 1,
     "instruction": "Write the final answer using the derivation and both verifier reports. Resolve any conflicts explicitly.",
     "access_list": ["question", "derive", "algebraic_check", "units_check"],
     "needs_tools": false

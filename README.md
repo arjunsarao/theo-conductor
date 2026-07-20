@@ -16,6 +16,70 @@ conductor completion and parsed JSON plan:
 <output-dir>/traces/plans-and-worker-outputs-rank-0.jsonl
 ```
 
+### Inspecting a trace locally
+
+`trace_viewer.py` is a Streamlit viewer for these files. It shows the reward
+distribution, groups the validation reasons behind the 0.0 and 0.2 reward
+cohorts, and expands each record into its plan, worker outputs, final answer,
+and raw conductor completion.
+
+From the repository root, run:
+
+```bash
+uv run streamlit run trace_viewer.py
+```
+
+The app loads the default `outputs/grpo-11352` rank-0 trace automatically. Use
+the sidebar to open a repository path, load a SLURM job by ID, or upload any
+JSONL trace. A repository trace can also be selected with
+`?trace=path/to/trace.jsonl`. The original `trace_viewer.html` remains available
+as a dependency-free viewer when served from the repository root.
+
+The default trace also has exact conductor-completion token counts, calculated
+with the Qwen conductor tokenizer. For another trace, generate its sidecar:
+
+```bash
+./.venv/bin/python scripts/trace_token_counts.py path/to/trace.jsonl
+```
+
+The viewer marks completions at or above the configured `1024`-token generation
+cap with `★`. Counts re-tokenize raw completion text and exclude special tokens.
+
+### Querying traces from Python or a model
+
+`theo-trace` is a JSON-first CLI for error analysis. It supports the same
+reward cohorts, normalized validation failures, batches, and record drill-down
+as the browser viewer, plus question-level rollout comparisons. Output is
+compact JSON by default so it can be consumed directly by another model.
+When a matching token-count sidecar is available, malformed completions at the
+configured generation cap are classified separately as output truncations.
+
+```bash
+# Dataset overview: rewards, errors, batches, and token saturation
+theo-trace summary outputs/grpo-11220/traces/plans-and-worker-outputs-rank-0.jsonl
+
+# Failure taxonomy with representative record IDs
+theo-trace errors outputs/grpo-11220/traces/plans-and-worker-outputs-rank-0.jsonl --examples 2
+
+# Combine filters and paginate compact records
+theo-trace list TRACE.jsonl --reward 0,0.2 --search "final step" --limit 20
+
+# Fetch the complete record after discovering its ID
+theo-trace show TRACE.jsonl --id 0:17
+
+# Find questions whose rollouts disagree, ordered worst mean reward first
+theo-trace questions TRACE.jsonl --min-rollouts 2 --disagreement-only --limit 30
+```
+
+Every filtering command accepts `--reward`, `--category`, `--batch`, `--rank`,
+`--search`, `--question`, `--has-plan`, and `--has-error`. Use `--pretty` before
+the subcommand for indented output, or invoke it without installation as
+`python -m theo_conductor.trace_analysis ...`.
+
+The reusable API is `TraceDataset.load(...)`, `TraceQuery`, and the
+`summary()`, `errors()`, `query()`, `questions()`, and `get()` methods in
+`theo_conductor.trace_analysis`.
+
 Distributed runs write one file per rank. Set `--wandb-project` and
 `--wandb-run-name` to name the remote run, or use `--report-to none` to keep
 only the local trace.

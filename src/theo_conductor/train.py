@@ -49,7 +49,7 @@ class TrainConfig:
     gradient_accumulation_steps: int = 2
     learning_rate: float = 1e-6
     num_generations: int = 4
-    max_completion_length: int = 512
+    max_completion_length: int = 1024
     max_context_length: int | None = None
     validation_samples: int = 200
     eval_steps: int = 100
@@ -359,7 +359,7 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
     parser.add_argument("--learning-rate", type=float, default=1e-6)
     parser.add_argument("--num-generations", type=int, default=4)
-    parser.add_argument("--max-completion-length", type=int, default=512)
+    parser.add_argument("--max-completion-length", type=int, default=1024)
     parser.add_argument("--max-context-length", type=int)
     parser.add_argument("--validation-samples", type=int, default=200)
     parser.add_argument("--eval-steps", type=int, default=100)
