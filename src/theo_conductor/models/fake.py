@@ -1,4 +1,6 @@
 import asyncio
+from typing import Any
+
 from theo_conductor.schema import ModelResponse
 
 
@@ -23,6 +25,7 @@ class FakeModelClient:
         context: dict[str, str],
         max_tokens: int | None = None,
         temperature: float | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> ModelResponse:
         self.calls.append(
             {
@@ -31,6 +34,7 @@ class FakeModelClient:
                 "context": context,
                 "max_tokens": max_tokens,
                 "temperature": temperature,
+                "response_format": response_format,
             }
         )
 

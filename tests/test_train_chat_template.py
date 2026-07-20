@@ -5,6 +5,7 @@ from theo_conductor.models.registry import ModelRegistry
 from theo_conductor.schema import ModelSpec
 from theo_conductor.train import (
     TrainConfig,
+    _reward_tier_probe,
     build_conductor_prompt,
     build_training_args,
     parse_args,
@@ -93,6 +94,30 @@ def test_build_training_args_maps_train_config_to_grpo_config():
     assert args.per_device_train_batch_size == 2
     assert args.num_generations == 2
     assert args.max_completion_length == 128
+
+
+def test_vllm_training_uses_json_schema_constrained_decoding():
+    registry = ModelRegistry(
+        [
+            ModelSpec(model_idx="solver", client=FakeModelClient("solver")),
+            ModelSpec(model_idx=7, client=FakeModelClient("critic")),
+        ]
+    )
+
+    args = build_training_args(TrainConfig(use_vllm=True), registry)
+
+    schema = args.generation_kwargs["structured_outputs"]["json"]
+    workflow = schema["properties"]["workflow"]
+    model_id = workflow["items"]["properties"]["model_id"]
+    assert workflow["minItems"] == 1
+    assert workflow["maxItems"] == 5
+    assert model_id == {"enum": ["solver", 7]}
+
+
+def test_reward_tier_probe_uses_a_semantically_invalid_workflow():
+    registry = ModelRegistry([ModelSpec(model_idx="solver", client=FakeModelClient("solver"))])
+
+    _reward_tier_probe(registry)
 
 
 def test_paper_training_defaults_map_to_one_iteration_batch():

@@ -197,7 +197,7 @@ def test_validate_task_does_not_require_question_in_final_access_list():
     validate_task(task)
 
 
-def test_validate_task_requires_final_to_access_question_and_previous_steps():
+def test_validate_task_allows_final_to_select_only_needed_previous_steps():
     task = make_task(
         [
             Step(
@@ -215,11 +215,7 @@ def test_validate_task_requires_final_to_access_question_and_previous_steps():
         ]
     )
 
-    with pytest.raises(
-        ValueError,
-        match=r"Final step is missing required access keys: \['solve'\]",
-    ):
-        validate_task(task)
+    validate_task(task)
 
 
 def test_validate_task_checks_model_ids_when_registry_is_provided(model_registry):

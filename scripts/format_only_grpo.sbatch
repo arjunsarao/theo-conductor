@@ -19,7 +19,7 @@ REPO_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 CONFIG="${MODEL_CONFIG:-${REPO_ROOT}/configs/local_small_models.yaml}"
 TRAIN_GPUS="${TRAIN_GPUS:-0,1}"
 TRAIN_OUTPUT_DIR="${TRAIN_OUTPUT_DIR:-${REPO_ROOT}/outputs/grpo-${SLURM_JOB_ID:-manual}}"
-WANDB_PROJECT="${WANDB_PROJECT:-theo-conductor-format}"
+WANDB_PROJECT="${WANDB_PROJECT:-theo-conductor}"
 TRAIN_EXTRA_ARGS="${TRAIN_EXTRA_ARGS:-}"
 GPU_MEMORY_LOG_INTERVAL="${GPU_MEMORY_LOG_INTERVAL:-5}"
 

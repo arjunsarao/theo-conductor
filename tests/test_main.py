@@ -7,7 +7,11 @@ from theo_conductor.schema import ModelResponse, ModelSpec
 
 
 class ConductorClient:
+    def __init__(self):
+        self.calls = []
+
     async def generate(self, **kwargs):
+        self.calls.append(kwargs)
         return ModelResponse(
             text=json.dumps(
                 {
@@ -68,12 +72,21 @@ def test_load_task(tmp_path):
 
 
 def test_create_task_generates_and_parses_workflow():
-    registry = ModelRegistry([ModelSpec(model_idx="planner", client=ConductorClient())])
+    client = ConductorClient()
+    registry = ModelRegistry([ModelSpec(model_idx="planner", client=client)])
 
     task = asyncio.run(create_task("What is 2 + 2?", registry, "planner"))
 
     assert task.question == "What is 2 + 2?"
     assert task.workflow[0].model_id == "planner"
+    response_format = client.calls[0]["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    schema = response_format["json_schema"]["schema"]
+    assert schema["properties"]["workflow"]["minItems"] == 1
+    assert schema["properties"]["workflow"]["maxItems"] == 5
+    model_id_schema = schema["properties"]["workflow"]["items"]["properties"]["model_id"]
+    assert model_id_schema == {"enum": ["planner"]}
 
 
 def test_main_reports_missing_task(capsys):

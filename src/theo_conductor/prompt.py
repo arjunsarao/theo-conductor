@@ -5,6 +5,67 @@ from string import Template
 from .models.registry import ModelRegistry
 
 
+def build_conductor_json_schema(model_registry: ModelRegistry | None = None) -> dict:
+    """Return the JSON Schema used to constrain conductor decoding.
+
+    Keeping this schema separate from ``Task`` is intentional: the original
+    question is supplied by the caller and must not be echoed by the planner.
+    """
+
+    model_ids = model_registry.model_ids() if model_registry is not None else []
+    if model_registry is not None and not model_ids:
+        raise ValueError("Cannot build a conductor workflow without configured models")
+
+    model_id_schema = (
+        {"enum": model_ids}
+        if model_ids
+        else {"anyOf": [{"type": "integer"}, {"type": "string"}]}
+    )
+
+    step_schema = {
+        "type": "object",
+        "properties": {
+            "step_id": {"type": "string", "minLength": 1},
+            "model_id": model_id_schema,
+            "instruction": {"type": "string", "minLength": 1},
+            "access_list": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+        },
+        "required": ["step_id", "model_id", "instruction", "access_list"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "task_type": {"type": "string", "minLength": 1},
+            "difficulty": {"type": "string", "enum": ["easy", "medium", "hard"]},
+            "workflow": {
+                "type": "array",
+                "items": step_schema,
+                "minItems": 1,
+                "maxItems": 5,
+            },
+        },
+        "required": ["task_type", "difficulty", "workflow"],
+        "additionalProperties": False,
+    }
+
+
+def build_conductor_response_format(model_registry: ModelRegistry) -> dict:
+    """Wrap the conductor schema for OpenAI-compatible structured outputs."""
+
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "conductor_workflow",
+            "strict": True,
+            "schema": build_conductor_json_schema(model_registry),
+        },
+    }
+
+
 def build_prompt(model_list: list[str], tool_list: list[str], example_list: list[str], query: str) -> str:
     prompt_path = Path(__file__).resolve().parents[2] / "conductor-prompt.txt"
     with prompt_path.open() as f:

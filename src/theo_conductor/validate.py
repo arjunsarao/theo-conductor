@@ -6,7 +6,7 @@ Given a json thats supposed to specify a workflow, validate it. A valid workflow
     - instruction: a string instruction for the model to follow
     - access_list: a list of strings specifying the inputs that the model can access. The access_list must include the question and any previous steps that the model needs to access. The access_list must not include any future steps.
     - needs_tools: a boolean indicating whether the model needs to use any tools to complete the step. If needs_tools is true, then the model must have access to the tools specified in the access_list.
-2. The workflow must have a final step that synthesizes the answer from the previous steps. The final step must have access to all previous steps and the question. The final step must not have access to any future steps.
+2. The last workflow entry is the final step. It may access whichever earlier step outputs it needs, and it must not access future steps.
 3. The workflow must not have any circular dependencies. A step cannot depend on itself or any future steps.
 4. The workflow must have a valid task_type and difficulty. The task_type must be a string and the difficulty must be one of "easy", "medium", or "hard".
 5. The workflow must have a valid question. The question must be a string that describes the problem to be solved.
@@ -57,12 +57,5 @@ def validate_task(task: Task, model_registry: ModelRegistry | None = None) -> No
                 )
 
         seen.add(step.step_id)
-
-    final = task.workflow[-1]
-    required_final_access = {step.step_id for step in task.workflow[:-1]}
-
-    missing = required_final_access - set(final.access_list)
-    if missing:
-        raise ValueError(f"Final step is missing required access keys: {sorted(missing)}.")
 
     topological_sort(task)

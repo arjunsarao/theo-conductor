@@ -1,4 +1,6 @@
 import time
+from typing import Any
+
 from openai import AsyncOpenAI
 from theo_conductor.schema import ModelResponse
 
@@ -15,15 +17,22 @@ class OpenAICompatibleClient:
         context: dict[str, str],
         max_tokens: int | None = None,
         temperature: float | None = None,
+        response_format: dict[str, Any] | None = None,
     ):
         messages = build_message(instruction=instruction, question=question, context=context)
         start = time.perf_counter()
 
+        request: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": max_tokens or 2048,
+            "temperature": temperature if temperature is not None else 0.2,
+        }
+        if response_format is not None:
+            request["response_format"] = response_format
+
         completion = await self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            max_tokens=max_tokens or 2048,
-            temperature=temperature if temperature is not None else 0.2,
+            **request,
         )
 
         latency_ms = (time.perf_counter() - start) * 1000

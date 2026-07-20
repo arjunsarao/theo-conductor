@@ -61,7 +61,7 @@ Available Worker Tools
 
 $tools
 
-Return ONLY valid JSON matching this schema.
+Output JSON matching this schema. Return only the JSON value, with no prose or code fence.
 
 {
   "task_type": string,
@@ -69,7 +69,7 @@ Return ONLY valid JSON matching this schema.
   "workflow": [
     {
       "step_id": string,
-      "model_id": integer,
+      "model_id": string | integer,
       "instruction": string,
       "access_list": [string]
     }

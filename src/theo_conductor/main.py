@@ -16,7 +16,7 @@ from rich.text import Text
 
 from .grpo import parse_conductor_json
 from .models.registry import ModelRegistry
-from .prompt import build_conductor_prompt
+from .prompt import build_conductor_prompt, build_conductor_response_format
 from .runner import Runner
 from .schema import RunResult, Step, StepOutput, Task
 from .scheduler import topological_sort
@@ -126,12 +126,12 @@ async def create_task(question: str, registry: ModelRegistry, conductor_model: s
         context={},
         max_tokens=2048,
         temperature=0.1,
+        response_format=build_conductor_response_format(registry),
     )
     return parse_conductor_json(
         response.text,
         question=question,
         model_registry=registry,
-        require_final_answer=False,
     )
 
 

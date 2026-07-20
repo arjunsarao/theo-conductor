@@ -26,7 +26,7 @@ from theo_conductor.grpo import (
     parse_conductor_json,
 )
 from theo_conductor.models.registry import ModelRegistry
-from theo_conductor.prompt import build_conductor_prompt
+from theo_conductor.prompt import build_conductor_json_schema, build_conductor_prompt
 from theo_conductor.runner import Runner
 from theo_conductor.traces import TrainingTraceLogger
 
@@ -152,7 +152,10 @@ def prepare_grpo_dataset(
     return dataset.map(format_row)
 
 
-def build_training_args(config: TrainConfig) -> GRPOConfig:
+def build_training_args(
+    config: TrainConfig,
+    model_registry: ModelRegistry | None = None,
+) -> GRPOConfig:
     training_kwargs = dict(
         output_dir=config.output_dir,
         seed=config.seed,
@@ -184,6 +187,12 @@ def build_training_args(config: TrainConfig) -> GRPOConfig:
         save_steps=1 if config.preflight else 500,
         remove_unused_columns=False,
     )
+    if config.use_vllm:
+        # TRL converts this mapping to vLLM's StructuredOutputsParams. JSON
+        # Schema decoding masks invalid next tokens during every rollout.
+        training_kwargs["generation_kwargs"] = {
+            "structured_outputs": {"json": build_conductor_json_schema(model_registry)}
+        }
     # Leave precision at the TRL/Transformers default when the operator did
     # not explicitly select one; passing None can be interpreted as True by
     # some installed Transformers versions.
@@ -234,7 +243,7 @@ def build_trainer(config: TrainConfig):
         model=config.model_name,
         train_dataset=train_dataset,
         processing_class=processor,
-        args=build_training_args(config),
+        args=build_training_args(config, model_registry),
         model_registry=model_registry,
         runner=runner,
         execute_workflows=config.execute_workflows,
@@ -283,7 +292,13 @@ def _reward_tier_probe(registry: ModelRegistry) -> None:
         ],
         "final_answer": "4",
     }
-    invalid_workflow = {**valid_workflow, "workflow": [{**valid_workflow["workflow"][0], "step_id": "solve"}]}
+    # Renaming the only step does not make a workflow invalid: the runner
+    # treats the last entry as the final step regardless of its step_id.
+    # Use a self-dependency so this probe exercises semantic validation.
+    invalid_workflow = {
+        **valid_workflow,
+        "workflow": [{**valid_workflow["workflow"][0], "access_list": ["solve"]}],
+    }
     valid_incorrect = {**valid_workflow, "final_answer": "5"}
     rewards = compute_reward(
         ["not json", invalid_workflow, valid_incorrect, valid_workflow],

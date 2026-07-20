@@ -67,6 +67,7 @@ class ModelClient(Protocol):
         context: Dict[str, str],
         max_tokens: int | None = None,
         temperature: float | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> ModelResponse: ...
 
 

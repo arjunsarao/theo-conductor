@@ -53,7 +53,6 @@ def parse_conductor_json(
     *,
     question: str | None = None,
     model_registry: ModelRegistry | None = None,
-    require_final_answer: bool = True,
 ) -> Task:
     """Parse a conductor completion into a validated ``Task``.
 
@@ -82,8 +81,6 @@ def parse_conductor_json(
     try:
         task = Task.from_dict(data)
         validate_task(task, model_registry)
-        if require_final_answer:
-            _validate_final_answer_contract(task)
     except (KeyError, TypeError, ValueError, ValidationError) as exc:
         raise ConductorParseError(str(exc)) from exc
 
@@ -389,16 +386,6 @@ def _extract_final_answer(run_result: RunResult) -> str | None:
         return None
     matches = _FINAL_ANSWER_MARKER_RE.findall(final.text)
     return matches[-1].strip() if matches else None
-
-
-def _validate_final_answer_contract(task: Task) -> None:
-    """Require generated workflows to give the final worker an answer protocol."""
-
-    instruction = task.workflow[-1].instruction
-    if not re.search(r"\bfinal\s*:", instruction, re.IGNORECASE):
-        raise ValueError(
-            f"Final step instruction must require `{FINAL_ANSWER_MARKER} <answer>` so its output is extractable."
-        )
 
 
 def _extract_single_number(answer: str) -> float | None:

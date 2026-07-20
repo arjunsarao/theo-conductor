@@ -64,11 +64,12 @@ def test_parse_conductor_json_rejects_invalid_workflow():
         parse_conductor_json('{"workflow": []}')
 
 
-def test_parse_conductor_json_requires_extractable_final_output():
+def test_parse_conductor_json_allows_runner_to_add_final_output_protocol():
     completion = VALID_COMPLETION.replace("End with FINAL: <answer>.", "Return only the answer.")
 
-    with pytest.raises(ConductorParseError, match="FINAL"):
-        parse_conductor_json(completion)
+    task = parse_conductor_json(completion)
+
+    assert task.workflow[-1].instruction == "Return the answer. Return only the answer."
 
 
 def test_compute_reward_scores_malformed_invalid_valid_and_correct():
@@ -82,7 +83,7 @@ def test_compute_reward_scores_malformed_invalid_valid_and_correct():
           "step_id": "solve",
           "model_id": "solver",
           "instruction": "Solve.",
-          "access_list": ["question"]
+          "access_list": ["question", "missing"]
         }
       ]
     }

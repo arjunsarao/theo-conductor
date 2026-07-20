@@ -141,3 +141,24 @@ def test_runner_applies_worker_decoding_settings(fake_registry):
 
     assert fake_registry.get(0).client.calls[0]["max_tokens"] == 4096
     assert fake_registry.get(0).client.calls[0]["temperature"] == 0.2
+
+
+def test_runner_adds_final_answer_protocol_when_instruction_omits_it(fake_registry):
+    task = Task(
+        task_type="test",
+        difficulty=Difficulty.EASY,
+        question="Question?",
+        workflow=[
+            Step(
+                step_id="answer",
+                model_idx=0,
+                instruction="Answer clearly.",
+                access_list=["question"],
+            )
+        ],
+    )
+
+    asyncio.run(Runner(fake_registry).run(task))
+
+    instruction = fake_registry.get(0).client.calls[0]["instruction"]
+    assert instruction.endswith("End with a separate line exactly formatted as FINAL: <answer>.")

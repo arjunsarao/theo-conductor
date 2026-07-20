@@ -66,3 +66,5 @@ Today was generally working on the infrastructure surrounding the system, prepar
 - Ported error analysis tool to streamlit.
 - Modified system prompt to align more with the conductor paper.
 - Modified constants (LR, $\beta_1$, etc.) to align with the paper.
+- Added constrained parsing to enforce conductor outputs only JSON.
+- Removed extraneous 
