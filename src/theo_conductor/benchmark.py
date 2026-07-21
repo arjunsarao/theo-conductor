@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import math
+import os
 import random
 import sys
 from collections import defaultdict
@@ -16,14 +17,27 @@ from typing import Any
 from .data import DEFAULT_MEGASCIENCE_SAMPLES, build_megascience_splits
 from .grpo import answers_match
 from .models.registry import ModelRegistry
+from .models.openai_compat import OpenAICompatibleClient
 
 
 DEFAULT_VALIDATION_SAMPLES = 200
+DEFAULT_JUDGE_BASE_URL = "http://10.10.0.1:80/v1"
+DEFAULT_JUDGE_MODEL = "moonshotai/Kimi-K2.6"
 DEFAULT_INSTRUCTION = (
     "Solve the problem independently. Show enough reasoning to make the result verifiable, then end "
     "with a separate line exactly formatted as FINAL: <answer>. The FINAL line should contain only "
     "the concise answer, including units when applicable."
 )
+JUDGE_INSTRUCTION = """You are an exacting but fair evaluator of scientific answers.
+Decide whether the candidate answer correctly answers the question, using the reference and full gold
+answer as the grading standard. Accept mathematically or scientifically equivalent wording, concise
+answers, harmless extra explanation, and answers that are more specific than the reference. Reject
+answers with a substantive contradiction, wrong value, missing required part, or reasoning whose final
+conclusion is wrong. Judge the candidate's actual answer, not formatting such as whether it used FINAL:.
+
+Return exactly one JSON object with this schema and no other text:
+{"correct": true, "reason": "One brief, concrete sentence explaining the verdict."}
+"""
 
 
 def extract_final_answer(text: str) -> str | None:
@@ -32,6 +46,177 @@ def extract_final_answer(text: str) -> str | None:
 
     matches = re.findall(r"(?im)^\s*final\s*(?:answer\s*)?:\s*(.+?)\s*$", text)
     return matches[-1].strip() if matches else None
+
+
+def parse_judge_verdict(text: str) -> tuple[bool, str]:
+    """Parse a judge response, allowing a JSON object inside fences or brief prose."""
+    decoder = json.JSONDecoder()
+    payload: Any = None
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            candidate, _ = decoder.raw_decode(text, index)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict) and "correct" in candidate:
+            payload = candidate
+            break
+    if not isinstance(payload, dict):
+        raise ValueError("Judge response did not contain a JSON verdict")
+    correct = payload.get("correct")
+    reason = payload.get("reason")
+    if not isinstance(correct, bool):
+        raise ValueError("Judge verdict 'correct' must be a boolean")
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("Judge verdict 'reason' must be a non-empty string")
+    return correct, reason.strip()
+
+
+def _judge_question(record: dict[str, Any]) -> str:
+    extracted = record.get("extracted_answer")
+    candidate_label = "EXTRACTED FINAL ANSWER" if extracted else "FULL CANDIDATE RESPONSE"
+    candidate = extracted or record.get("response") or "(no response)"
+    return "\n\n".join(
+        (
+            f"QUESTION:\n{record.get('question') or '(missing)'}",
+            f"REFERENCE ANSWER:\n{record.get('reference_answer') or '(not provided)'}",
+            f"FULL GOLD ANSWER:\n{record.get('gold_answer') or '(not provided)'}",
+            f"{candidate_label}:\n{candidate}",
+        )
+    )
+
+
+async def judge_records(
+    records: Sequence[dict[str, Any]],
+    *,
+    client: Any,
+    judge_model: str = DEFAULT_JUDGE_MODEL,
+    concurrency: int = 8,
+    max_tokens: int = 8192,
+    attempts: int = 3,
+    force: bool = False,
+) -> list[dict[str, Any]]:
+    """Semantically grade records in place, resuming records already judged by this model."""
+    if concurrency <= 0:
+        raise ValueError("judge concurrency must be positive")
+    if max_tokens <= 0:
+        raise ValueError("judge max tokens must be positive")
+    if attempts <= 0:
+        raise ValueError("judge attempts must be positive")
+
+    semaphore = asyncio.Semaphore(concurrency)
+    write_lock = asyncio.Lock()
+    completed = 0
+
+    async def grade(record: dict[str, Any]) -> None:
+        nonlocal completed
+        already_judged = (
+            record.get("judge_model") == judge_model
+            and isinstance(record.get("judge_correct"), bool)
+            and not record.get("judge_error")
+        )
+        if already_judged and not force:
+            return
+
+        if "heuristic_correct" not in record:
+            record["heuristic_correct"] = bool(record.get("correct", False))
+        record["judge_model"] = judge_model
+        record["judge_correct"] = None
+        record["judge_reason"] = None
+        record["judge_response"] = None
+        record["judge_error"] = None
+
+        if record.get("error") is not None or not record.get("response"):
+            record.update(
+                judge_correct=False,
+                judge_reason="The model request failed or produced no response.",
+                correct=False,
+            )
+        else:
+            for attempt in range(1, attempts + 1):
+                try:
+                    async with semaphore:
+                        response = await client.generate(
+                            instruction=JUDGE_INSTRUCTION,
+                            question=_judge_question(record),
+                            context={},
+                            max_tokens=max_tokens,
+                            temperature=0.0,
+                        )
+                    record["judge_response"] = response.text
+                    correct, reason = parse_judge_verdict(response.text)
+                    record.update(
+                        judge_correct=correct,
+                        judge_reason=reason,
+                        correct=correct,
+                    )
+                    break
+                except Exception as exc:
+                    if attempt == attempts:
+                        record["judge_error"] = f"{type(exc).__name__}: {exc}"
+                        record["correct"] = bool(record["heuristic_correct"])
+
+        async with write_lock:
+            completed += 1
+            verdict = "error" if record.get("judge_error") else ("correct" if record["correct"] else "incorrect")
+            print(
+                f"[judge {completed}] {record.get('model_id')} / {record.get('example_id')}: {verdict}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    await asyncio.gather(*(grade(record) for record in records))
+    return list(records)
+
+
+def write_results_atomic(path: Path, records: Sequence[dict[str, Any]]) -> None:
+    """Replace a JSONL file only after its complete updated form is on disk."""
+    temporary = path.with_name(f".{path.name}.tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    temporary.replace(path)
+
+
+async def judge_records_with_checkpoints(
+    records: Sequence[dict[str, Any]],
+    *,
+    all_records: Sequence[dict[str, Any]],
+    results_path: Path,
+    client: Any,
+    judge_model: str = DEFAULT_JUDGE_MODEL,
+    concurrency: int = 8,
+    max_tokens: int = 8192,
+    attempts: int = 3,
+    checkpoint_size: int = 25,
+    force: bool = False,
+) -> list[dict[str, Any]]:
+    """Judge records and atomically checkpoint the JSONL after each small batch."""
+    if checkpoint_size <= 0:
+        raise ValueError("judge checkpoint size must be positive")
+    pending = [
+        record
+        for record in records
+        if force
+        or record.get("judge_model") != judge_model
+        or not isinstance(record.get("judge_correct"), bool)
+        or bool(record.get("judge_error"))
+    ]
+    for start in range(0, len(pending), checkpoint_size):
+        await judge_records(
+            pending[start : start + checkpoint_size],
+            client=client,
+            judge_model=judge_model,
+            concurrency=concurrency,
+            max_tokens=max_tokens,
+            attempts=attempts,
+            force=force,
+        )
+        write_results_atomic(results_path, all_records)
+    return list(records)
 
 
 def _usage_value(usage: dict[str, Any] | None, *keys: str) -> int | None:
@@ -252,6 +437,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--concurrency", type=int, default=4, help="Concurrent requests per model endpoint.")
     parser.add_argument("--bootstrap-samples", type=int, default=10_000)
+    parser.add_argument(
+        "--judge",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use Kimi K2.6 as a semantic correctness judge (enabled by default).",
+    )
+    parser.add_argument("--judge-base-url", default=os.environ.get("KIMI_BASE_URL", DEFAULT_JUDGE_BASE_URL))
+    parser.add_argument("--judge-api-key", default=os.environ.get("KIMI_API_KEY", "change-this"))
+    parser.add_argument("--judge-model", default=os.environ.get("KIMI_MODEL", DEFAULT_JUDGE_MODEL))
+    parser.add_argument("--judge-concurrency", type=int, default=8)
+    parser.add_argument("--judge-max-tokens", type=int, default=8192)
+    parser.add_argument("--judge-attempts", type=int, default=3)
+    parser.add_argument("--judge-checkpoint-size", type=int, default=25)
     return parser.parse_args(argv)
 
 
@@ -290,6 +488,23 @@ async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
         if str(record["model_id"]) in expected_ids
         and (str(record["example_id"]), _record_key(record)[2]) in selected_keys
     ]
+    if args.judge:
+        judge_client = OpenAICompatibleClient(
+            base_url=args.judge_base_url,
+            api_key=args.judge_api_key,
+            model=args.judge_model,
+        )
+        await judge_records_with_checkpoints(
+            selected_records,
+            all_records=records,
+            results_path=results_path,
+            client=judge_client,
+            judge_model=args.judge_model,
+            concurrency=args.judge_concurrency,
+            max_tokens=args.judge_max_tokens,
+            attempts=args.judge_attempts,
+            checkpoint_size=args.judge_checkpoint_size,
+        )
     summary = {
         "dataset": "MegaScience/MegaScience",
         "split": "train-derived deterministic validation subset",
@@ -299,6 +514,8 @@ async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
         "evaluated_samples": len(dataset),
         "max_tokens": args.max_tokens,
         "temperature": args.temperature,
+        "judge_enabled": args.judge,
+        "judge_model": args.judge_model if args.judge else None,
         **summarize_records(selected_records, bootstrap_samples=args.bootstrap_samples, seed=args.seed),
     }
     summary_path = args.output_dir / "summary.json"

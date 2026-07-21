@@ -4,6 +4,8 @@ import json
 from theo_conductor.benchmark import (
     bootstrap_accuracy_ci,
     extract_final_answer,
+    judge_records,
+    parse_judge_verdict,
     run_benchmark,
     summarize_records,
 )
@@ -25,9 +27,54 @@ class AnswerClient:
         )
 
 
+class JudgeClient:
+    def __init__(self, verdicts):
+        self.verdicts = iter(verdicts)
+
+    async def generate(self, **kwargs):
+        correct, reason = next(self.verdicts)
+        return ModelResponse(text=json.dumps({"correct": correct, "reason": reason}))
+
+
 def test_extract_final_answer_requires_explicit_marker_and_uses_last_one():
     assert extract_final_answer("answer: 1") is None
     assert extract_final_answer("FINAL: 1\nrevision\nFinal answer: 2") == "2"
+
+
+def test_parse_judge_verdict_accepts_fenced_json_and_rejects_non_boolean():
+    assert parse_judge_verdict('```json\n{"correct": true, "reason": "Equivalent."}\n```') == (
+        True,
+        "Equivalent.",
+    )
+    try:
+        parse_judge_verdict('{"correct": "yes", "reason": "Equivalent."}')
+    except ValueError as exc:
+        assert "boolean" in str(exc)
+    else:
+        raise AssertionError("non-boolean judge verdict should fail")
+
+
+def test_judge_records_preserves_heuristic_and_makes_judge_authoritative():
+    records = [
+        {
+            "model_id": "solver",
+            "example_id": "a",
+            "question": "What is log10(0.001)?",
+            "gold_answer": "0.001 = 10^-3, so the answer is -3.",
+            "reference_answer": "-3",
+            "response": "Calculation. FINAL: -3",
+            "extracted_answer": "-3",
+            "correct": False,
+            "error": None,
+        }
+    ]
+
+    asyncio.run(judge_records(records, client=JudgeClient([(True, "The answer matches exactly.")])))
+
+    assert records[0]["heuristic_correct"] is False
+    assert records[0]["judge_correct"] is True
+    assert records[0]["correct"] is True
+    assert records[0]["judge_reason"] == "The answer matches exactly."
 
 
 def test_run_benchmark_evaluates_every_model_on_same_rows_and_resumes(tmp_path):

@@ -24,6 +24,7 @@ from theo_conductor.trace_analysis import TraceDataset, TraceQuery, TraceRecord,
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_TRACE = ROOT / "outputs/grpo-11352/traces/plans-and-worker-outputs-rank-0.jsonl"
+DEFAULT_MEGASCIENCE_DIR = ROOT / "outputs/megascience-small-models"
 PAGE_SIZE = 80
 REWARD_COLORS = {0.0: "#c94848", 0.2: "#e87817", 0.5: "#f2c94c", 1.0: "#318260"}
 DIFFICULTY_COLORS = {"easy": "#318260", "medium": "#f2c94c", "hard": "#c94848"}
@@ -43,7 +44,7 @@ ERROR_STYLES = (
 )
 
 
-st.set_page_config(page_title="GRPO trace analysis", page_icon="◈", layout="wide")
+st.set_page_config(page_title="Theo trace viewer", page_icon="◈", layout="wide")
 
 
 def reward_label(value: Any) -> str:
@@ -110,6 +111,27 @@ def load_upload(raw: bytes, name: str) -> TraceDataset:
     if not records:
         raise ValueError("No JSON records were found.")
     return TraceDataset(records, malformed_lines=malformed)
+
+
+@st.cache_data(show_spinner=False)
+def load_megascience(summary_path: str, results_path: str, modified_ns: tuple[int, int]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Load the benchmark aggregate and per-question records."""
+    del modified_ns
+    with Path(summary_path).open(encoding="utf-8") as handle:
+        summary = json.load(handle)
+    records: list[dict[str, Any]] = []
+    with Path(results_path).open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, 1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Invalid benchmark record on line {line_number}: {exc}") from exc
+            if not isinstance(record, dict):
+                raise ValueError(f"Benchmark record on line {line_number} is not a JSON object.")
+            records.append(record)
+    return summary, records
 
 
 def selected_dataset() -> tuple[TraceDataset, str]:
@@ -397,42 +419,259 @@ def render_record(record: TraceRecord, error_styles: dict[str, tuple[str, str]])
             st.code(str(data.get("conductor_completion") or "(none)"))
 
 
-st.title("`theo-conductor` trace analysis")
-st.caption("Inspect reward cohorts, validation failures, conductor plans, and worker responses.")
+def render_trace_analysis_page() -> None:
+    st.title("`theo-conductor` trace analysis")
+    st.caption("Inspect reward cohorts, validation failures, conductor plans, and worker responses.")
 
-try:
-    dataset, source_name = selected_dataset()
-except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
-    st.error(str(exc))
-    st.stop()
+    try:
+        dataset, source_name = selected_dataset()
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        st.error(str(exc))
+        st.stop()
 
-st.caption(f"{source_name} · {len(dataset.records):,} records")
-if dataset.malformed_lines:
-    lines = ", ".join(str(issue["line"]) for issue in dataset.malformed_lines)
-    st.warning(f"Skipped {len(dataset.malformed_lines)} malformed JSONL line(s): {lines}")
+    st.caption(f"{source_name} · {len(dataset.records):,} records")
+    if dataset.malformed_lines:
+        lines = ", ".join(str(issue["line"]) for issue in dataset.malformed_lines)
+        st.warning(f"Skipped {len(dataset.malformed_lines)} malformed JSONL line(s): {lines}")
 
-error_styles = error_style_map(dataset.records)
-render_overview(dataset, error_styles)
+    error_styles = error_style_map(dataset.records)
+    render_overview(dataset, error_styles)
 
-st.subheader("Trace records")
-reward_values = sorted({float(record.data.get("reward", 0)) for record in dataset.records})
-categories = sorted({record.error_category for record in dataset.records})
-filter_columns = st.columns((1, 2))
-selected_rewards = filter_columns[0].multiselect(
-    "Rewards", reward_values, format_func=reward_label, placeholder="All rewards"
-)
-selected_categories = filter_columns[1].multiselect("Reasons", categories, placeholder="All reasons")
-
-matches = dataset.query(
-    TraceQuery(
-        rewards=set(selected_rewards),
-        categories=set(selected_categories),
+    st.subheader("Trace records")
+    reward_values = sorted({float(record.data.get("reward", 0)) for record in dataset.records})
+    categories = sorted({record.error_category for record in dataset.records})
+    filter_columns = st.columns((1, 2))
+    selected_rewards = filter_columns[0].multiselect(
+        "Rewards", reward_values, format_func=reward_label, placeholder="All rewards"
     )
-)
-pages = max(1, (len(matches) + PAGE_SIZE - 1) // PAGE_SIZE)
-page = int(st.number_input("Page", min_value=1, max_value=pages, value=1, step=1))
-start = (page - 1) * PAGE_SIZE
-shown = matches[start : start + PAGE_SIZE]
-st.caption(f"Showing {start + 1 if shown else 0}–{start + len(shown)} of {len(matches):,} matching records")
-for trace_record in shown:
-    render_record(trace_record, error_styles)
+    selected_categories = filter_columns[1].multiselect("Reasons", categories, placeholder="All reasons")
+
+    matches = dataset.query(
+        TraceQuery(rewards=set(selected_rewards), categories=set(selected_categories))
+    )
+    pages = max(1, (len(matches) + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = int(st.number_input("Page", min_value=1, max_value=pages, value=1, step=1))
+    start = (page - 1) * PAGE_SIZE
+    shown = matches[start : start + PAGE_SIZE]
+    st.caption(f"Showing {start + 1 if shown else 0}–{start + len(shown)} of {len(matches):,} matching records")
+    for trace_record in shown:
+        render_record(trace_record, error_styles)
+
+
+def _percent(value: Any) -> str:
+    return f"{float(value):.1%}" if value is not None else "—"
+
+
+def render_megascience_record(record: dict[str, Any]) -> None:
+    outcome = "Request failed" if record.get("error") else ("Correct" if record.get("correct") else "Incorrect")
+    icon = "🟢" if record.get("correct") else ("🔴" if record.get("error") else "🟠")
+    question = str(record.get("question") or "Question unavailable")
+    with st.expander(
+        f'{icon} **{outcome}** · {record.get("display_name") or record.get("model_id")} · '
+        f'{record.get("subject") or "unknown"} — {question}'
+    ):
+        metadata = []
+        if record.get("example_id"):
+            metadata.append(str(record["example_id"]))
+        if record.get("latency_ms") is not None:
+            metadata.append(f'{float(record["latency_ms"]) / 1000:.2f} s')
+        if record.get("total_tokens") is not None:
+            metadata.append(f'{int(record["total_tokens"]):,} tokens')
+        if metadata:
+            st.caption(" · ".join(metadata))
+        st.markdown("**Question**")
+        st.markdown(question)
+        answer_columns = st.columns(2)
+        with answer_columns[0]:
+            st.markdown("**Extracted answer**")
+            st.markdown(str(record.get("extracted_answer") or "_No `FINAL:` answer extracted._"))
+        with answer_columns[1]:
+            st.markdown("**Reference answer**")
+            st.markdown(str(record.get("reference_answer") or record.get("gold_answer") or "—"))
+        if record.get("judge_reason"):
+            st.info(f'Kimi judge: {record["judge_reason"]}')
+        if record.get("error"):
+            st.error(str(record["error"]))
+        with st.expander("Full model response"):
+            st.markdown(str(record.get("response") or "_No response._"))
+        with st.expander("Full gold answer"):
+            st.markdown(str(record.get("gold_answer") or "—"))
+
+
+def render_megascience_page() -> None:
+    st.title("Small models on MegaScience")
+    st.caption("Compare the local worker models on the shared deterministic MegaScience validation set.")
+
+    summary_path = DEFAULT_MEGASCIENCE_DIR / "summary.json"
+    results_path = DEFAULT_MEGASCIENCE_DIR / "results.jsonl"
+    try:
+        summary, records = load_megascience(
+            str(summary_path),
+            str(results_path),
+            (summary_path.stat().st_mtime_ns, results_path.stat().st_mtime_ns),
+        )
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        st.error(f"Could not load the MegaScience benchmark: {exc}")
+        st.stop()
+
+    models = summary.get("models") or {}
+    expected = int(summary.get("evaluated_samples") or 0) * len(models)
+    correct = sum(bool(record.get("correct")) for record in records)
+    request_failures = sum(record.get("error") is not None for record in records)
+    extraction_failures = sum(
+        record.get("error") is None and record.get("extracted_answer") is None for record in records
+    )
+    question_outcomes: dict[str, list[bool]] = {}
+    for record in records:
+        question_id = str(record.get("question_sha256") or record.get("example_id") or record.get("question"))
+        question_outcomes.setdefault(question_id, []).append(bool(record.get("correct")))
+    oracle_correct = sum(any(outcomes) for outcomes in question_outcomes.values())
+    oracle_accuracy = oracle_correct / len(question_outcomes) if question_outcomes else None
+
+    headline = st.columns(6)
+    for column, (value, label) in zip(
+        headline,
+        (
+            (f"{len(models)}", "Models"),
+            (f'{summary.get("evaluated_samples", 0):,}', "Questions / model"),
+            (f"{len(records):,} / {expected:,}", "Completed calls"),
+            (_percent(correct / len(records) if records else None), "Overall accuracy"),
+            (_percent(oracle_accuracy), "Oracle success rate"),
+            (f"{request_failures:,}", "Request failures"),
+        ),
+        strict=True,
+    ):
+        column.metric(label, value)
+    st.caption(
+        f'{summary.get("dataset", "MegaScience")} · {summary.get("split", "validation")} · '
+        f'seed {summary.get("seed", "—")} · temperature {summary.get("temperature", "—")} · '
+        f'{summary.get("max_tokens", "—")} max output tokens'
+    )
+
+    comparison_rows = []
+    subject_rows = []
+    for model_id, metrics in models.items():
+        ci = metrics.get("accuracy_95_ci") or [None, None]
+        name = metrics.get("display_name") or model_id
+        comparison_rows.append(
+            {
+                "Model": name,
+                "Accuracy": metrics.get("accuracy"),
+                "95% CI low": ci[0],
+                "95% CI high": ci[1],
+                "Correct": metrics.get("correct"),
+                "Questions": metrics.get("questions"),
+                "Missing FINAL": metrics.get("answer_extraction_failures"),
+                "Mean latency (s)": float(metrics.get("mean_latency_ms") or 0) / 1000,
+                "Mean tokens": metrics.get("mean_total_tokens"),
+            }
+        )
+        for subject, values in (metrics.get("by_subject") or {}).items():
+            subject_rows.append(
+                {"Model": name, "Subject": subject, "Accuracy": values.get("accuracy"), "Questions": values.get("questions")}
+            )
+
+    st.subheader("Model comparison")
+    comparison = pd.DataFrame(comparison_rows)
+    if not comparison.empty:
+        st.dataframe(
+            comparison,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Accuracy": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1),
+                "95% CI low": st.column_config.NumberColumn(format="%.1%%"),
+                "95% CI high": st.column_config.NumberColumn(format="%.1%%"),
+                "Mean latency (s)": st.column_config.NumberColumn(format="%.2f"),
+                "Mean tokens": st.column_config.NumberColumn(format="%.0f"),
+            },
+        )
+        resource_rows = comparison.melt(
+            id_vars=["Model"],
+            value_vars=["Mean latency (s)", "Mean tokens"],
+            var_name="Metric",
+            value_name="Value",
+        )
+        latency_tab, subject_tab = st.tabs(("Cost per answer", "Accuracy by subject"))
+        with latency_tab:
+            st.altair_chart(
+                alt.Chart(resource_rows)
+                .mark_bar(cornerRadiusEnd=4)
+                .encode(
+                    x=alt.X("Value:Q", title=None),
+                    y=alt.Y("Model:N", title=None, sort="-x"),
+                    color=alt.Color("Model:N", legend=None),
+                    tooltip=["Model:N", "Metric:N", alt.Tooltip("Value:Q", format=",.2f")],
+                    column=alt.Column("Metric:N", title=None, spacing=30),
+                )
+                .properties(height=170)
+                .resolve_scale(x="independent"),
+                width="stretch",
+            )
+        with subject_tab:
+            if subject_rows:
+                st.altair_chart(
+                    alt.Chart(pd.DataFrame(subject_rows))
+                    .mark_rect(cornerRadius=3)
+                    .encode(
+                        x=alt.X("Subject:N", title=None),
+                        y=alt.Y("Model:N", title=None),
+                        color=alt.Color("Accuracy:Q", scale=alt.Scale(domain=[0, 1], scheme="redyellowgreen")),
+                        tooltip=["Model:N", "Subject:N", alt.Tooltip("Accuracy:Q", format=".1%"), "Questions:Q"],
+                    )
+                    .properties(height=170),
+                    width="stretch",
+                )
+    if correct == 0 and records:
+        st.warning(
+            "The saved evaluator marked every answer incorrect. Use the answer browser below to compare extracted and reference answers; correctness reflects the stored benchmark labels."
+        )
+
+    st.subheader("Answer browser")
+    all_models = sorted({str(record.get("display_name") or record.get("model_id")) for record in records})
+    all_subjects = sorted({str(record.get("subject") or "unknown") for record in records})
+    filters = st.columns((2, 1, 1, 2))
+    selected_models = filters[0].multiselect("Models", all_models, placeholder="All models")
+    selected_subjects = filters[1].multiselect("Subjects", all_subjects, placeholder="All subjects")
+    selected_outcome = filters[2].selectbox("Outcome", ("All", "Correct", "Incorrect", "Missing FINAL", "Request failed"))
+    search = filters[3].text_input("Search questions and answers")
+
+    def matches(record: dict[str, Any]) -> bool:
+        name = str(record.get("display_name") or record.get("model_id"))
+        subject = str(record.get("subject") or "unknown")
+        if selected_models and name not in selected_models:
+            return False
+        if selected_subjects and subject not in selected_subjects:
+            return False
+        outcomes = {
+            "Correct": bool(record.get("correct")),
+            "Incorrect": not record.get("correct") and record.get("error") is None,
+            "Missing FINAL": record.get("error") is None and record.get("extracted_answer") is None,
+            "Request failed": record.get("error") is not None,
+        }
+        if selected_outcome != "All" and not outcomes[selected_outcome]:
+            return False
+        if search:
+            haystack = " ".join(str(record.get(key) or "") for key in ("question", "response", "extracted_answer", "reference_answer"))
+            if search.casefold() not in haystack.casefold():
+                return False
+        return True
+
+    matching_records = [record for record in records if matches(record)]
+    pages = max(1, (len(matching_records) + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = int(st.number_input("Answer page", min_value=1, max_value=pages, value=1, step=1))
+    start = (page - 1) * PAGE_SIZE
+    shown = matching_records[start : start + PAGE_SIZE]
+    st.caption(
+        f"Showing {start + 1 if shown else 0}–{start + len(shown)} of {len(matching_records):,} answers · "
+        f"{extraction_failures:,} missing FINAL answers overall"
+    )
+    for record in shown:
+        render_megascience_record(record)
+
+
+page_name = st.sidebar.radio("Viewer page", ("Trace analysis", "MegaScience · small models"))
+if page_name == "MegaScience · small models":
+    render_megascience_page()
+else:
+    render_trace_analysis_page()
