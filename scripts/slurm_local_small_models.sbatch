@@ -217,3 +217,20 @@ asyncio.run(main())
 PY
 
 echo "All configured models and the theo-conductor client pipeline passed. Logs: $LOG_ROOT"
+
+if [[ "${BENCHMARK_MEGASCIENCE:-0}" == "1" ]]; then
+  echo "Benchmarking every configured model on the shared MegaScience validation subset"
+  benchmark_args=(
+    --config "$CONFIG"
+    --output-dir "${BENCHMARK_OUTPUT_DIR:-${REPO_ROOT}/outputs/megascience-small-models}"
+    --seed "${BENCHMARK_SEED:-42}"
+    --total-samples "${BENCHMARK_TOTAL_SAMPLES:-2000}"
+    --validation-samples "${BENCHMARK_VALIDATION_SAMPLES:-200}"
+    --max-tokens "${BENCHMARK_MAX_TOKENS:-4096}"
+    --temperature "${BENCHMARK_TEMPERATURE:-0.0}"
+    --concurrency "${BENCHMARK_CONCURRENCY:-4}"
+  )
+  [[ -n "${BENCHMARK_MAX_SAMPLES:-}" ]] && benchmark_args+=(--max-samples "$BENCHMARK_MAX_SAMPLES")
+  PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
+    python -m theo_conductor.benchmark "${benchmark_args[@]}"
+fi

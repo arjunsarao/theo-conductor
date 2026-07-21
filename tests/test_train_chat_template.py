@@ -84,7 +84,9 @@ def test_build_training_args_maps_train_config_to_grpo_config():
             output_dir="tmp-output",
             max_steps=3,
             per_device_train_batch_size=2,
+            per_device_eval_batch_size=4,
             num_generations=2,
+            num_generations_eval=4,
             max_completion_length=128,
         )
     )
@@ -92,7 +94,9 @@ def test_build_training_args_maps_train_config_to_grpo_config():
     assert args.output_dir == "tmp-output"
     assert args.max_steps == 3
     assert args.per_device_train_batch_size == 2
+    assert args.per_device_eval_batch_size == 4
     assert args.num_generations == 2
+    assert args.num_generations_eval == 4
     assert args.max_completion_length == 128
 
 
@@ -127,9 +131,11 @@ def test_paper_training_defaults_map_to_one_iteration_batch():
     assert config.model_name == "Qwen/Qwen2.5-7B"
     assert args.max_steps == 200
     assert args.per_device_train_batch_size == 1
+    assert args.per_device_eval_batch_size == 8
     assert args.gradient_accumulation_steps == 256
     assert args.generation_batch_size == 256
     assert args.num_generations == 64
+    assert args.num_generations_eval == 8
     assert args.generation_batch_size // args.num_generations == 4
     assert args.max_completion_length == 1024
     assert args.temperature == 1.0

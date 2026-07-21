@@ -52,6 +52,7 @@ class TrainConfig:
     lr_scheduler_type: str = "cosine"
     warmup_ratio: float = 0.03
     num_generations: int = 64
+    num_generations_eval: int = 8
     generation_batch_size: int = 256
     max_completion_length: int = 1024
     max_worker_tokens: int = 4096
@@ -59,6 +60,7 @@ class TrainConfig:
     max_context_length: int | None = None
     validation_samples: int = 200
     eval_steps: int = 100
+    per_device_eval_batch_size: int = 8
     temperature: float = 1.0
     top_p: float = 1.0
     use_vllm: bool = False
@@ -170,6 +172,7 @@ def build_training_args(
         adam_beta1=0.9,
         adam_beta2=0.999,
         num_generations=config.num_generations,
+        num_generations_eval=config.num_generations_eval,
         generation_batch_size=config.generation_batch_size,
         max_completion_length=config.max_completion_length,
         temperature=config.temperature,
@@ -182,7 +185,10 @@ def build_training_args(
         run_name=config.wandb_run_name,
         eval_strategy="no" if config.preflight else "steps",
         eval_steps=config.eval_steps,
-        per_device_eval_batch_size=64,
+        # Evaluation forwards return full-vocabulary logits which Accelerate
+        # converts to fp32. Keep this substantially smaller than the rollout
+        # batch to avoid a multi-tens-of-GiB temporary allocation.
+        per_device_eval_batch_size=config.per_device_eval_batch_size,
         save_strategy="steps",
         save_steps=1 if config.preflight else 500,
         remove_unused_columns=False,
@@ -419,6 +425,12 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--lr-scheduler-type", default="cosine")
     parser.add_argument("--warmup-ratio", type=float, default=0.03)
     parser.add_argument("--num-generations", type=int, default=64)
+    parser.add_argument(
+        "--num-generations-eval",
+        type=int,
+        default=8,
+        help="Completions sampled per prompt during evaluation (default: 8).",
+    )
     parser.add_argument("--generation-batch-size", type=int, default=256)
     parser.add_argument(
         "--max-conductor-completion-length",
@@ -443,6 +455,12 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--max-context-length", type=int)
     parser.add_argument("--validation-samples", type=int, default=200)
     parser.add_argument("--eval-steps", type=int, default=100)
+    parser.add_argument(
+        "--per-device-eval-batch-size",
+        type=int,
+        default=8,
+        help="Evaluation forward-pass batch size per GPU (default: 8).",
+    )
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top-p", type=float, default=1.0)
     parser.add_argument("--use-vllm", action="store_true")

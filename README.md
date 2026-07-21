@@ -98,6 +98,33 @@ used to build the prompt and validate generated `model_id` values. To execute
 worker workflows during rewards, use `scripts/small_local_model_grpo.sbatch`
 or pass `--execute-workflows` to `python -m theo_conductor.train`.
 
+## Small-model MegaScience benchmark
+
+Benchmark every model in `configs/local_small_models.yaml` with one independent
+call on the same deterministic 200-row MegaScience validation subset used by
+training:
+
+```bash
+sbatch --export=ALL,BENCHMARK_MEGASCIENCE=1 scripts/slurm_local_small_models.sbatch
+```
+
+The job starts all three vLLM endpoints, verifies them, and writes resumable
+per-question records to `outputs/megascience-small-models/results.jsonl` and
+aggregate metrics to `outputs/megascience-small-models/summary.json`. Metrics
+include accuracy with a bootstrap 95% confidence interval, accuracy by subject,
+token usage, latency, request failures, and missing-`FINAL:` extraction failures.
+Re-running the command resumes completed model/question pairs.
+
+For an endpoint setup that is already running, invoke the benchmark directly:
+
+```bash
+uv run theo-benchmark
+```
+
+Use `--max-samples 5` for a smoke run. Dataset identity is controlled by
+`--seed`, `--total-samples`, and `--validation-samples`; their defaults (42,
+2000, and 200) intentionally match conductor training.
+
 # TODO
 
 - Train the conductor on a single set of models using GRPO on the MegaScience Dataset

@@ -66,5 +66,9 @@ Today was generally working on the infrastructure surrounding the system, prepar
 - Ported error analysis tool to streamlit.
 - Modified system prompt to align more with the conductor paper.
 - Modified constants (LR, $\beta_1$, etc.) to align with the paper.
-- Added constrained parsing to enforce conductor outputs only JSON.
-- Removed extraneous 
+- Added structured decoding to enforce conductor outputs only JSON.
+- Removed extraneous checks from schema validation (e.g. final step must include question in access list, include all previous steps, be named final, etc. )
+
+## July 21st, 2026
+
+- Added benchmarking for single models in worker pool.

@@ -25,6 +25,7 @@ dependencies = [
 
 [project.scripts]
 theo-trace = "theo_conductor.trace_analysis:main"
+theo-benchmark = "theo_conductor.benchmark:main"
 
 [[tool.uv.index]]
 name = "vllm-cu129"
