@@ -115,13 +115,14 @@ include accuracy with a bootstrap 95% confidence interval, accuracy by subject,
 token usage, latency, request failures, and missing-`FINAL:` extraction failures.
 Re-running the command resumes completed model/question pairs.
 
-Kimi K2.6 judges semantic correctness after generation by default. Each JSONL
-record retains the original exact/numeric score in `heuristic_correct` and adds
-`judge_correct`, `judge_reason`, `judge_response`, `judge_model`, and
-`judge_error`; the top-level `correct` field contains the authoritative judge
-verdict. Judge progress is atomically checkpointed and resumes on rerun. Set
+Kimi K2.6 judges semantic correctness after generation by default, with multiple
+answers packed into each API request. Each JSONL record adds `judge_correct`,
+`judge_reason`, `judge_response`, `judge_model`, and `judge_error`; the top-level
+`correct` field contains the authoritative judge verdict. Judge progress is
+atomically checkpointed and resumes on rerun. Set
 `KIMI_BASE_URL`, `KIMI_API_KEY`, or `KIMI_MODEL` to override the cluster
-defaults, or pass `--no-judge` to `theo-benchmark` to disable judging.
+defaults. Use `--judge-batch-size` and `--judge-concurrency` to tune judge
+throughput, or pass `--no-judge` to disable judging.
 
 To judge or re-judge an existing results file and refresh its `summary.json`:
 

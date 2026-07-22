@@ -15,7 +15,6 @@ from statistics import mean
 from typing import Any
 
 from .data import DEFAULT_MEGASCIENCE_SAMPLES, build_megascience_splits
-from .grpo import answers_match
 from .models.registry import ModelRegistry
 from .models.openai_compat import OpenAICompatibleClient
 
@@ -29,14 +28,15 @@ DEFAULT_INSTRUCTION = (
     "the concise answer, including units when applicable."
 )
 JUDGE_INSTRUCTION = """You are an exacting but fair evaluator of scientific answers.
-Decide whether the candidate answer correctly answers the question, using the reference and full gold
-answer as the grading standard. Accept mathematically or scientifically equivalent wording, concise
-answers, harmless extra explanation, and answers that are more specific than the reference. Reject
-answers with a substantive contradiction, wrong value, missing required part, or reasoning whose final
-conclusion is wrong. Judge the candidate's actual answer, not formatting such as whether it used FINAL:.
+Evaluate every item independently. Decide whether its candidate response correctly answers its question,
+using the reference and full gold answer as the grading standard. Accept mathematically or scientifically
+equivalent wording, concise answers, harmless extra explanation, and answers that are more specific than
+the reference. Reject answers with a substantive contradiction, wrong value, missing required part, or
+reasoning whose final conclusion is wrong. Judge the candidate's actual answer, not formatting such as
+whether it used FINAL:.
 
-Return exactly one JSON object with this schema and no other text:
-{"correct": true, "reason": "One brief, concrete sentence explaining the verdict."}
+Return exactly one JSON array with one result for every input item, in the same order, and no other text:
+[{"id": "the input id", "correct": true, "reason": "One brief, concrete sentence explaining the verdict."}]
 """
 
 
@@ -48,43 +48,60 @@ def extract_final_answer(text: str) -> str | None:
     return matches[-1].strip() if matches else None
 
 
-def parse_judge_verdict(text: str) -> tuple[bool, str]:
-    """Parse a judge response, allowing a JSON object inside fences or brief prose."""
+def parse_judge_batch(text: str, expected_ids: Sequence[str]) -> dict[str, tuple[bool, str]]:
+    """Parse and strictly validate a batch of judge verdicts."""
     decoder = json.JSONDecoder()
     payload: Any = None
     for index, char in enumerate(text):
-        if char != "{":
+        if char != "[":
             continue
         try:
             candidate, _ = decoder.raw_decode(text, index)
         except json.JSONDecodeError:
             continue
-        if isinstance(candidate, dict) and "correct" in candidate:
+        if isinstance(candidate, list):
             payload = candidate
             break
-    if not isinstance(payload, dict):
-        raise ValueError("Judge response did not contain a JSON verdict")
-    correct = payload.get("correct")
-    reason = payload.get("reason")
-    if not isinstance(correct, bool):
-        raise ValueError("Judge verdict 'correct' must be a boolean")
-    if not isinstance(reason, str) or not reason.strip():
-        raise ValueError("Judge verdict 'reason' must be a non-empty string")
-    return correct, reason.strip()
+    if not isinstance(payload, list):
+        raise ValueError("Judge response did not contain a JSON verdict array")
+
+    verdicts: dict[str, tuple[bool, str]] = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            raise ValueError("Each judge verdict must be an object")
+        item_id = item.get("id")
+        correct = item.get("correct")
+        reason = item.get("reason")
+        if not isinstance(item_id, str) or not item_id:
+            raise ValueError("Judge verdict 'id' must be a non-empty string")
+        if item_id in verdicts:
+            raise ValueError(f"Judge returned duplicate id: {item_id}")
+        if not isinstance(correct, bool):
+            raise ValueError("Judge verdict 'correct' must be a boolean")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("Judge verdict 'reason' must be a non-empty string")
+        verdicts[item_id] = (correct, reason.strip())
+
+    if set(verdicts) != set(expected_ids):
+        missing = sorted(set(expected_ids) - set(verdicts))
+        unexpected = sorted(set(verdicts) - set(expected_ids))
+        raise ValueError(f"Judge verdict ids did not match request (missing={missing}, unexpected={unexpected})")
+    return verdicts
 
 
-def _judge_question(record: dict[str, Any]) -> str:
-    extracted = record.get("extracted_answer")
-    candidate_label = "EXTRACTED FINAL ANSWER" if extracted else "FULL CANDIDATE RESPONSE"
-    candidate = extracted or record.get("response") or "(no response)"
-    return "\n\n".join(
-        (
-            f"QUESTION:\n{record.get('question') or '(missing)'}",
-            f"REFERENCE ANSWER:\n{record.get('reference_answer') or '(not provided)'}",
-            f"FULL GOLD ANSWER:\n{record.get('gold_answer') or '(not provided)'}",
-            f"{candidate_label}:\n{candidate}",
-        )
-    )
+def _judge_batch_question(batch: Sequence[tuple[str, dict[str, Any]]]) -> str:
+    items = [
+        {
+            "id": item_id,
+            "question": record.get("question") or "(missing)",
+            "reference_answer": record.get("reference_answer") or "(not provided)",
+            "full_gold_answer": record.get("gold_answer") or "(not provided)",
+            "candidate_response": record.get("response") or "(no response)",
+            "extracted_final_answer": record.get("extracted_answer"),
+        }
+        for item_id, record in batch
+    ]
+    return "Evaluate every item in this JSON array:\n" + json.dumps(items, ensure_ascii=False)
 
 
 async def judge_records(
@@ -93,6 +110,7 @@ async def judge_records(
     client: Any,
     judge_model: str = DEFAULT_JUDGE_MODEL,
     concurrency: int = 8,
+    batch_size: int = 10,
     max_tokens: int = 8192,
     attempts: int = 3,
     force: bool = False,
@@ -100,33 +118,29 @@ async def judge_records(
     """Semantically grade records in place, resuming records already judged by this model."""
     if concurrency <= 0:
         raise ValueError("judge concurrency must be positive")
+    if batch_size <= 0:
+        raise ValueError("judge batch size must be positive")
     if max_tokens <= 0:
         raise ValueError("judge max tokens must be positive")
     if attempts <= 0:
         raise ValueError("judge attempts must be positive")
 
     semaphore = asyncio.Semaphore(concurrency)
-    write_lock = asyncio.Lock()
     completed = 0
-
-    async def grade(record: dict[str, Any]) -> None:
-        nonlocal completed
+    pending: list[dict[str, Any]] = []
+    for record in records:
         already_judged = (
             record.get("judge_model") == judge_model
             and isinstance(record.get("judge_correct"), bool)
             and not record.get("judge_error")
         )
         if already_judged and not force:
-            return
-
-        if "heuristic_correct" not in record:
-            record["heuristic_correct"] = bool(record.get("correct", False))
+            continue
         record["judge_model"] = judge_model
         record["judge_correct"] = None
         record["judge_reason"] = None
         record["judge_response"] = None
         record["judge_error"] = None
-
         if record.get("error") is not None or not record.get("response"):
             record.update(
                 judge_correct=False,
@@ -134,39 +148,52 @@ async def judge_records(
                 correct=False,
             )
         else:
-            for attempt in range(1, attempts + 1):
-                try:
-                    async with semaphore:
-                        response = await client.generate(
-                            instruction=JUDGE_INSTRUCTION,
-                            question=_judge_question(record),
-                            context={},
-                            max_tokens=max_tokens,
-                            temperature=0.0,
-                        )
-                    record["judge_response"] = response.text
-                    correct, reason = parse_judge_verdict(response.text)
+            pending.append(record)
+
+    batches = [pending[start : start + batch_size] for start in range(0, len(pending), batch_size)]
+
+    async def grade(batch_index: int, records_batch: Sequence[dict[str, Any]]) -> None:
+        nonlocal completed
+        identified_batch = [(f"batch-{batch_index}-item-{index}", record) for index, record in enumerate(records_batch)]
+        expected_ids = [item_id for item_id, _ in identified_batch]
+        for attempt in range(1, attempts + 1):
+            try:
+                async with semaphore:
+                    response = await client.generate(
+                        instruction=JUDGE_INSTRUCTION,
+                        question=_judge_batch_question(identified_batch),
+                        context={},
+                        max_tokens=max_tokens,
+                        temperature=0.0,
+                    )
+                verdicts = parse_judge_batch(response.text, expected_ids)
+                for item_id, record in identified_batch:
+                    correct, reason = verdicts[item_id]
                     record.update(
                         judge_correct=correct,
                         judge_reason=reason,
+                        judge_response=json.dumps(
+                            {"id": item_id, "correct": correct, "reason": reason}, ensure_ascii=False
+                        ),
                         correct=correct,
                     )
-                    break
-                except Exception as exc:
-                    if attempt == attempts:
+                break
+            except Exception as exc:
+                if attempt == attempts:
+                    for _, record in identified_batch:
                         record["judge_error"] = f"{type(exc).__name__}: {exc}"
-                        record["correct"] = bool(record["heuristic_correct"])
+                        record["correct"] = False
 
-        async with write_lock:
-            completed += 1
-            verdict = "error" if record.get("judge_error") else ("correct" if record["correct"] else "incorrect")
-            print(
-                f"[judge {completed}] {record.get('model_id')} / {record.get('example_id')}: {verdict}",
-                file=sys.stderr,
-                flush=True,
-            )
+        completed += len(records_batch)
+        errors = sum(bool(record.get("judge_error")) for record in records_batch)
+        print(
+            f"[judge {completed}] batch {batch_index + 1}/{len(batches)}: "
+            f"{len(records_batch) - errors} judged, {errors} errors",
+            file=sys.stderr,
+            flush=True,
+        )
 
-    await asyncio.gather(*(grade(record) for record in records))
+    await asyncio.gather(*(grade(index, batch) for index, batch in enumerate(batches)))
     return list(records)
 
 
@@ -189,6 +216,7 @@ async def judge_records_with_checkpoints(
     client: Any,
     judge_model: str = DEFAULT_JUDGE_MODEL,
     concurrency: int = 8,
+    batch_size: int = 10,
     max_tokens: int = 8192,
     attempts: int = 3,
     checkpoint_size: int = 25,
@@ -211,6 +239,7 @@ async def judge_records_with_checkpoints(
             client=client,
             judge_model=judge_model,
             concurrency=concurrency,
+            batch_size=batch_size,
             max_tokens=max_tokens,
             attempts=attempts,
             force=force,
@@ -374,7 +403,7 @@ async def run_benchmark(
             "reference_answer": row.get("reference_answer"),
             "response": None,
             "extracted_answer": None,
-            "correct": False,
+            "correct": None,
             "error": None,
             "prompt_tokens": None,
             "completion_tokens": None,
@@ -394,7 +423,6 @@ async def run_benchmark(
                 record.update(
                     response=response.text,
                     extracted_answer=answer,
-                    correct=(answer is not None and answers_match(answer, str(row["answer"]))),
                     prompt_tokens=_usage_value(response.usage, "prompt_tokens", "input_tokens"),
                     completion_tokens=_usage_value(response.usage, "completion_tokens", "output_tokens"),
                     total_tokens=_usage_value(response.usage, "total_tokens"),
@@ -411,7 +439,7 @@ async def run_benchmark(
             completed.add(key)
             print(
                 f"[{len(completed)}] {model_id} / {row['id']}: "
-                f"{'correct' if record['correct'] else 'incorrect'}",
+                f"{'error' if record['error'] else 'completed'}",
                 file=sys.stderr,
                 flush=True,
             )
@@ -447,6 +475,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--judge-api-key", default=os.environ.get("KIMI_API_KEY", "change-this"))
     parser.add_argument("--judge-model", default=os.environ.get("KIMI_MODEL", DEFAULT_JUDGE_MODEL))
     parser.add_argument("--judge-concurrency", type=int, default=8)
+    parser.add_argument("--judge-batch-size", type=int, default=10)
     parser.add_argument("--judge-max-tokens", type=int, default=8192)
     parser.add_argument("--judge-attempts", type=int, default=3)
     parser.add_argument("--judge-checkpoint-size", type=int, default=25)
@@ -501,6 +530,7 @@ async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
             client=judge_client,
             judge_model=args.judge_model,
             concurrency=args.judge_concurrency,
+            batch_size=args.judge_batch_size,
             max_tokens=args.judge_max_tokens,
             attempts=args.judge_attempts,
             checkpoint_size=args.judge_checkpoint_size,
@@ -516,6 +546,7 @@ async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
         "temperature": args.temperature,
         "judge_enabled": args.judge,
         "judge_model": args.judge_model if args.judge else None,
+        "judge_batch_size": args.judge_batch_size if args.judge else None,
         **summarize_records(selected_records, bootstrap_samples=args.bootstrap_samples, seed=args.seed),
     }
     summary_path = args.output_dir / "summary.json"

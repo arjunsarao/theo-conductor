@@ -42,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--api-key", default=os.environ.get("KIMI_API_KEY", "change-this"))
     parser.add_argument("--model", default=os.environ.get("KIMI_MODEL", DEFAULT_JUDGE_MODEL))
     parser.add_argument("--concurrency", type=int, default=8)
+    parser.add_argument("--batch-size", type=int, default=10)
     parser.add_argument("--max-tokens", type=int, default=8192)
     parser.add_argument("--attempts", type=int, default=3)
     parser.add_argument("--checkpoint-size", type=int, default=25)
@@ -66,6 +67,7 @@ async def async_main() -> int:
         client=client,
         judge_model=args.model,
         concurrency=args.concurrency,
+        batch_size=args.batch_size,
         max_tokens=args.max_tokens,
         attempts=args.attempts,
         checkpoint_size=args.checkpoint_size,
@@ -82,6 +84,7 @@ async def async_main() -> int:
     summary.update(
         judge_enabled=True,
         judge_model=args.model,
+        judge_batch_size=args.batch_size,
         **summarize_records(records, bootstrap_samples=args.bootstrap_samples, seed=seed),
     )
     temporary = summary_path.with_name(f".{summary_path.name}.tmp")

@@ -5,7 +5,7 @@ from theo_conductor.benchmark import (
     bootstrap_accuracy_ci,
     extract_final_answer,
     judge_records,
-    parse_judge_verdict,
+    parse_judge_batch,
     run_benchmark,
     summarize_records,
 )
@@ -29,11 +29,20 @@ class AnswerClient:
 
 class JudgeClient:
     def __init__(self, verdicts):
-        self.verdicts = iter(verdicts)
+        self.verdicts = verdicts
+        self.calls = []
 
     async def generate(self, **kwargs):
-        correct, reason = next(self.verdicts)
-        return ModelResponse(text=json.dumps({"correct": correct, "reason": reason}))
+        self.calls.append(kwargs)
+        payload = json.loads(kwargs["question"].split("\n", 1)[1])
+        return ModelResponse(
+            text=json.dumps(
+                [
+                    {"id": item["id"], "correct": correct, "reason": reason}
+                    for item, (correct, reason) in zip(payload, self.verdicts, strict=True)
+                ]
+            )
+        )
 
 
 def test_extract_final_answer_requires_explicit_marker_and_uses_last_one():
@@ -41,20 +50,25 @@ def test_extract_final_answer_requires_explicit_marker_and_uses_last_one():
     assert extract_final_answer("FINAL: 1\nrevision\nFinal answer: 2") == "2"
 
 
-def test_parse_judge_verdict_accepts_fenced_json_and_rejects_non_boolean():
-    assert parse_judge_verdict('```json\n{"correct": true, "reason": "Equivalent."}\n```') == (
-        True,
-        "Equivalent.",
-    )
+def test_parse_judge_batch_requires_every_requested_id():
+    assert parse_judge_batch(
+        '```json\n[{"id":"a","correct":true,"reason":"Equivalent."}]\n```', ["a"]
+    ) == {"a": (True, "Equivalent.")}
     try:
-        parse_judge_verdict('{"correct": "yes", "reason": "Equivalent."}')
+        parse_judge_batch('[{"id":"wrong","correct":true,"reason":"Equivalent."}]', ["a"])
+    except ValueError as exc:
+        assert "did not match" in str(exc)
+    else:
+        raise AssertionError("mismatched judge ids should fail")
+    try:
+        parse_judge_batch('[{"id":"a","correct":"yes","reason":"Equivalent."}]', ["a"])
     except ValueError as exc:
         assert "boolean" in str(exc)
     else:
         raise AssertionError("non-boolean judge verdict should fail")
 
 
-def test_judge_records_preserves_heuristic_and_makes_judge_authoritative():
+def test_judge_records_batches_requests_and_makes_judge_authoritative():
     records = [
         {
             "model_id": "solver",
@@ -64,17 +78,33 @@ def test_judge_records_preserves_heuristic_and_makes_judge_authoritative():
             "reference_answer": "-3",
             "response": "Calculation. FINAL: -3",
             "extracted_answer": "-3",
-            "correct": False,
+            "correct": None,
             "error": None,
-        }
+        },
+        {
+            "model_id": "solver",
+            "example_id": "b",
+            "question": "What is 2 + 2?",
+            "gold_answer": "4",
+            "reference_answer": "4",
+            "response": "Calculation. FINAL: 5",
+            "extracted_answer": "5",
+            "correct": None,
+            "error": None,
+        },
     ]
+    client = JudgeClient(
+        [(True, "The answer matches exactly."), (False, "The candidate gives the wrong value.")]
+    )
 
-    asyncio.run(judge_records(records, client=JudgeClient([(True, "The answer matches exactly.")])))
+    asyncio.run(judge_records(records, client=client, batch_size=10))
 
-    assert records[0]["heuristic_correct"] is False
+    assert len(client.calls) == 1
     assert records[0]["judge_correct"] is True
     assert records[0]["correct"] is True
     assert records[0]["judge_reason"] == "The answer matches exactly."
+    assert records[1]["judge_correct"] is False
+    assert records[1]["correct"] is False
 
 
 def test_run_benchmark_evaluates_every_model_on_same_rows_and_resumes(tmp_path):
@@ -105,6 +135,7 @@ def test_run_benchmark_evaluates_every_model_on_same_rows_and_resumes(tmp_path):
     }
     assert len(path.read_text().splitlines()) == 4
     assert all(json.loads(line)["response"] for line in path.read_text().splitlines())
+    assert all(json.loads(line)["correct"] is None for line in path.read_text().splitlines())
 
 
 def test_summary_reports_accuracy_failures_usage_and_subjects():
