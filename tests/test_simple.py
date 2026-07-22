@@ -11,6 +11,7 @@ from theo_conductor.schema import Task, Step, Difficulty, ModelSpec
 from theo_conductor.runner import Runner
 from theo_conductor.models.registry import ModelRegistry
 from theo_conductor.models.fake import FakeModelClient
+from theo_conductor.artifact import ArtifactStore
 
 @pytest.fixture
 def fake_registry():
@@ -162,3 +163,54 @@ def test_runner_adds_final_answer_protocol_when_instruction_omits_it(fake_regist
 
     instruction = fake_registry.get(0).client.calls[0]["instruction"]
     assert instruction.endswith("End with a separate line exactly formatted as FINAL: <answer>.")
+
+
+def test_runner_passes_only_declared_artifacts_and_returns_manifest(fake_registry, tmp_path):
+    first_source = tmp_path / "first.csv"
+    first_source.write_text("value\n1\n", encoding="utf-8")
+    second_source = tmp_path / "second.csv"
+    second_source.write_text("value\n2\n", encoding="utf-8")
+    store = ArtifactStore("run-1", root=tmp_path / "runs")
+    store.publish(first_source, artifact_id="first", kind="table")
+    store.publish(second_source, artifact_id="second", kind="table")
+    task = Task(
+        task_type="test",
+        difficulty=Difficulty.EASY,
+        question="Analyze the data.",
+        workflow=[
+            Step(
+                step_id="final",
+                model_idx=0,
+                instruction="Analyze the provided artifact.",
+                access_list=["question"],
+                artifact_inputs=["first"],
+            )
+        ],
+    )
+
+    result = asyncio.run(Runner(fake_registry, artifact_store=store).run(task))
+
+    artifact_context = fake_registry.get(0).client.calls[0]["context"]["artifacts"]
+    assert '"artifact_id": "first"' in artifact_context
+    assert '"artifact_id": "second"' not in artifact_context
+    assert {item["artifact_id"] for item in result.artifacts} == {"first", "second"}
+
+
+def test_runner_requires_store_for_artifact_inputs(fake_registry):
+    task = Task(
+        task_type="test",
+        difficulty=Difficulty.EASY,
+        question="Analyze the data.",
+        workflow=[
+            Step(
+                step_id="final",
+                model_idx=0,
+                instruction="Analyze it.",
+                access_list=["question"],
+                artifact_inputs=["results"],
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="no artifact store"):
+        asyncio.run(Runner(fake_registry).run(task))

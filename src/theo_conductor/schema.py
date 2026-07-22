@@ -17,6 +17,7 @@ class Step(BaseModel):
     model_id: int | str = Field(validation_alias=AliasChoices("model_id", "model_idx"))
     instruction: str
     access_list: List[str] = Field(default_factory=list)
+    artifact_inputs: List[str] = Field(default_factory=list)
     needs_tools: bool = False
     depends_on: Set[str] = Field(default_factory=set)
 
@@ -49,6 +50,7 @@ class StepOutput(BaseModel):
 class RunResult(BaseModel):
     task: Task
     outputs: Dict[str, StepOutput]
+    artifacts: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -64,7 +66,7 @@ class ModelClient(Protocol):
         self,
         instruction: str,
         question: str,
-        context: Dict[str, str],
+        context: Dict[str, Any],
         max_tokens: int | None = None,
         temperature: float | None = None,
         response_format: dict[str, Any] | None = None,

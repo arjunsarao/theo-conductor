@@ -72,3 +72,8 @@ Today was generally working on the infrastructure surrounding the system, prepar
 ## July 21st, 2026
 
 - Added benchmarking for single models in worker pool.
+
+## July 22nd, 2026
+
+- Removed brittle answer checking based on equivalence and moved to pure LLM-as-a-judge with our Kimi k2.6.
+- Started work on a shared file repository for intermediate artifacts.

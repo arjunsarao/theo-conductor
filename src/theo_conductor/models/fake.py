@@ -22,7 +22,7 @@ class FakeModelClient:
         *,
         instruction: str,
         question: str,
-        context: dict[str, str],
+        context: dict[str, Any],
         max_tokens: int | None = None,
         temperature: float | None = None,
         response_format: dict[str, Any] | None = None,

@@ -268,3 +268,23 @@ def test_validate_task_accepts_tools_when_model_supports_tools(model_registry):
     )
 
     validate_task(task, model_registry)
+
+
+def test_validate_task_rejects_duplicate_artifact_inputs(model_registry):
+    task = Task(
+        task_type="test",
+        difficulty=Difficulty.EASY,
+        question="Question?",
+        workflow=[
+            Step(
+                step_id="final",
+                model_id="solver",
+                instruction="Answer.",
+                access_list=["question"],
+                artifact_inputs=["results", "results"],
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="duplicate artifact inputs"):
+        validate_task(task, model_registry)

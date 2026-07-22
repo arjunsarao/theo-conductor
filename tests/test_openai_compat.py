@@ -2,7 +2,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from theo_conductor.models.openai_compat import OpenAICompatibleClient
+from theo_conductor.models.openai_compat import OpenAICompatibleClient, build_message
 
 
 def _completion(text: str = "{}") -> SimpleNamespace:
@@ -41,3 +41,15 @@ def test_openai_compatible_client_does_not_constrain_worker_responses():
     asyncio.run(client.generate(instruction="Answer.", question="Question?", context={}))
 
     assert "response_format" not in create.await_args.kwargs
+
+
+def test_build_message_labels_artifacts_separately_from_step_outputs():
+    messages = build_message(
+        instruction="Analyze.",
+        question="Question?",
+        context={"solver": "answer", "artifacts": '[{"artifact_id": "results"}]'},
+    )
+
+    content = messages[1]["content"]
+    assert "<step_output id=solver>answer</step_output>" in content
+    assert '<artifacts>[{"artifact_id": "results"}]</artifacts>' in content

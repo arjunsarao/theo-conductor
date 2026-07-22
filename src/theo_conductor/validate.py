@@ -48,6 +48,11 @@ def validate_task(task: Task, model_registry: ModelRegistry | None = None) -> No
             if access_key not in allowed:
                 raise ValueError(f"Step {step.step_id!r} accesses unknown or future key {access_key!r}.")
 
+        if len(step.artifact_inputs) != len(set(step.artifact_inputs)):
+            raise ValueError(f"Step {step.step_id!r} contains duplicate artifact inputs.")
+        if any(not artifact_id.strip() for artifact_id in step.artifact_inputs):
+            raise ValueError(f"Step {step.step_id!r} artifact inputs must be non-empty strings.")
+
         if model_registry is not None:
             spec = model_registry.get(step.model_id)
 

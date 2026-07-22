@@ -14,7 +14,7 @@ class OpenAICompatibleClient:
         self,
         instruction: str,
         question: str,
-        context: dict[str, str],
+        context: dict[str, Any],
         max_tokens: int | None = None,
         temperature: float | None = None,
         response_format: dict[str, Any] | None = None,
@@ -45,18 +45,21 @@ class OpenAICompatibleClient:
         return ModelResponse(text=text, raw=completion, usage=usage, latency_ms=latency_ms)
 
 
-def build_message(*, instruction: str, question: str, context: dict[str, str]) -> list[dict[str, str]]:
+def build_message(*, instruction: str, question: str, context: dict[str, Any]) -> list[dict[str, str]]:
     context_blocks = []
 
     for step_id, output in context.items():
-        context_blocks.append(f"<step_output id={step_id}>{output}</step_output>")
+        if step_id == "artifacts":
+            context_blocks.append(f"<artifacts>{output}</artifacts>")
+        else:
+            context_blocks.append(f"<step_output id={step_id}>{output}</step_output>")
 
     context_text = "\n".join(context_blocks)
     user_content = f"""
 Original question:
 {question}
 
-Available previous step outputs:
+Available context:
 {context_text if context_text else "(none)"}
 
 Your instruction:
