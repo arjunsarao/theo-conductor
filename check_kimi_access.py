@@ -8,6 +8,18 @@ import json
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from theo_conductor.benchmark import (  # noqa: E402
+    JUDGE_INSTRUCTION,
+    build_judge_batch_question,
+    parse_judge_batch,
+)
+from theo_conductor.models.openai_compat import build_message  # noqa: E402
 
 
 BASE_URL = "http://10.10.0.1:80/v1"
@@ -53,6 +65,84 @@ def ask_question(question: str, max_tokens: int) -> dict[str, object]:
         },
         timeout=120,
     )
+
+
+def build_batch_request(batch_size: int, max_tokens: int) -> tuple[dict[str, object], dict[str, bool]]:
+    """Build one training-shaped judge request containing known control answers."""
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+
+    expected: dict[str, bool] = {}
+    records: list[tuple[str, dict[str, object]]] = []
+    for index in range(batch_size):
+        item_id = f"batch-check-{index}"
+        correct = index % 2 == 0
+        expected[item_id] = correct
+        records.append(
+            (
+                item_id,
+                {
+                    "question": "What is 2 + 2?",
+                    "reference_answer": "4",
+                    "gold_answer": "Adding two and two gives 4.",
+                    "response": f"Calculation complete. FINAL: {'4' if correct else '5'}",
+                    "extracted_answer": "4" if correct else "5",
+                },
+            )
+        )
+
+    messages = build_message(
+        instruction=JUDGE_INSTRUCTION,
+        question=build_judge_batch_question(records),
+        context={},
+    )
+    return (
+        {
+            "model": TARGET_MODEL,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": 0,
+        },
+        expected,
+    )
+
+
+def ask_batch(batch_size: int, max_tokens: int) -> tuple[dict[str, object], dict[str, bool]]:
+    payload, expected = build_batch_request(batch_size, max_tokens)
+    return post_json("/chat/completions", payload, timeout=300), expected
+
+
+def response_text(payload: dict[str, object]) -> str:
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise ValueError("Batch response did not contain a completion choice")
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        raise ValueError("Batch response choice did not contain a message")
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("Batch response message did not contain text content")
+    return content
+
+
+def validate_batch_response(payload: dict[str, object], expected: dict[str, bool]) -> dict[str, tuple[bool, str]]:
+    verdicts = parse_judge_batch(response_text(payload), list(expected))
+    mismatches = {
+        item_id: {"expected": correct, "actual": verdicts[item_id][0]}
+        for item_id, correct in expected.items()
+        if verdicts[item_id][0] is not correct
+    }
+    if mismatches:
+        raise ValueError(f"Judge returned incorrect control verdicts: {mismatches}")
+    return verdicts
+
+
+def print_batch_response(payload: dict[str, object], expected: dict[str, bool]) -> int:
+    verdicts = validate_batch_response(payload, expected)
+    print(f"OK: {TARGET_MODEL} judged {len(verdicts)} items in one request.")
+    for item_id, (correct, reason) in verdicts.items():
+        print(f"- {item_id}: correct={str(correct).lower()} — {reason}")
+    return 0
 
 
 def check_model_access() -> int:
@@ -116,6 +206,11 @@ def parse_args() -> argparse.Namespace:
         default=1024,
         help="Completion token budget for reasoning plus answer.",
     )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        help="Send one training-shaped judge request containing this many control answers.",
+    )
     return parser.parse_args()
 
 
@@ -123,6 +218,11 @@ def main() -> int:
     args = parse_args()
 
     try:
+        if args.question and args.batch_size is not None:
+            raise ValueError("Provide either a question or --batch-size, not both")
+        if args.batch_size is not None:
+            response, expected = ask_batch(args.batch_size, args.max_tokens)
+            return print_batch_response(response, expected)
         if args.question:
             response = ask_question(args.question, args.max_tokens)
             return print_chat_response(response)
@@ -143,6 +243,9 @@ def main() -> int:
         return 1
     except json.JSONDecodeError as exc:
         print(f"Could not parse JSON response: {exc}")
+        return 1
+    except ValueError as exc:
+        print(f"Invalid response: {exc}")
         return 1
 
 

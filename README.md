@@ -8,6 +8,8 @@ GRPO training reports normal trainer metrics to Weights & Biases by default
 under the `theo-conductor` project. Each reward batch also logs a
 `conductor/plans_and_worker_outputs` table containing the generated plan,
 worker responses, reward, final answer, and any execution error.
+For executed-workflow training, the trace also records Kimi's verdict, reason,
+validated response, attempt count, and terminal judge error (if any).
 
 The complete trace is always appended locally as JSONL, including the raw
 conductor completion and parsed JSON plan:
@@ -97,6 +99,18 @@ This job requests two GPUs for conductor training. The worker registry is still
 used to build the prompt and validate generated `model_id` values. To execute
 worker workflows during rewards, use `scripts/small_local_model_grpo.sbatch`
 or pass `--execute-workflows` to `python -m theo_conductor.train`.
+
+Executed-workflow training uses Kimi K2.6 as the sole semantic correctness
+judge. Every valid rollout passed to one GRPO reward callback is packed into a
+single judge request; malformed or invalid workflows retain their structural
+reward without being answer-judged. The complete request is retried on API or
+schema-validation failures, and training stops if all attempts fail—there is no
+local exact/numeric heuristic fallback. Configure the endpoint with
+`KIMI_BASE_URL`, `KIMI_API_KEY`, and `KIMI_MODEL`; tune failure handling with
+`--judge-attempts`, `--judge-retry-delay-seconds`, `--judge-max-tokens`,
+`--judge-connect-timeout-seconds`, and `--judge-timeout-seconds`. Judge clients
+disable the OpenAI SDK's internal retries so `--judge-attempts` is the exact
+number of batch attempts recorded in training traces.
 
 ## Small-model MegaScience benchmark
 

@@ -89,7 +89,7 @@ def parse_judge_batch(text: str, expected_ids: Sequence[str]) -> dict[str, tuple
     return verdicts
 
 
-def _judge_batch_question(batch: Sequence[tuple[str, dict[str, Any]]]) -> str:
+def build_judge_batch_question(batch: Sequence[tuple[str, dict[str, Any]]]) -> str:
     items = [
         {
             "id": item_id,
@@ -161,7 +161,7 @@ async def judge_records(
                 async with semaphore:
                     response = await client.generate(
                         instruction=JUDGE_INSTRUCTION,
-                        question=_judge_batch_question(identified_batch),
+                        question=build_judge_batch_question(identified_batch),
                         context={},
                         max_tokens=max_tokens,
                         temperature=0.0,

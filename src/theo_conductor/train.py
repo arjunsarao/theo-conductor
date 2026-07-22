@@ -14,9 +14,9 @@ import torch
 from transformers import AutoProcessor, AutoTokenizer
 from trl.trainer.grpo_config import GRPOConfig
 
+from theo_conductor.benchmark import DEFAULT_JUDGE_BASE_URL, DEFAULT_JUDGE_MODEL
 from theo_conductor.data import build_megascience_splits, build_training_dataset
 from theo_conductor.grpo import (
-    CORRECT_REWARD,
     INVALID_WORKFLOW_REWARD,
     MALFORMED_REWARD,
     VALID_WORKFLOW_REWARD,
@@ -25,6 +25,7 @@ from theo_conductor.grpo import (
     compute_reward,
     parse_conductor_json,
 )
+from theo_conductor.models.openai_compat import OpenAICompatibleClient
 from theo_conductor.models.registry import ModelRegistry
 from theo_conductor.prompt import build_conductor_json_schema, build_conductor_prompt
 from theo_conductor.runner import Runner
@@ -65,6 +66,14 @@ class TrainConfig:
     top_p: float = 1.0
     use_vllm: bool = False
     execute_workflows: bool = False
+    judge_base_url: str = DEFAULT_JUDGE_BASE_URL
+    judge_api_key: str = "change-this"
+    judge_model: str = DEFAULT_JUDGE_MODEL
+    judge_max_tokens: int = 8192
+    judge_attempts: int = 3
+    judge_retry_delay_seconds: float = 1.0
+    judge_timeout_seconds: float = 600.0
+    judge_connect_timeout_seconds: float = 30.0
     bf16: bool | None = None
     fp16: bool = False
     report_to: str = "wandb"
@@ -148,6 +157,7 @@ def prepare_grpo_dataset(
             "question": question,
             "answer": row["answer"],
             "answer_type": row.get("answer_type"),
+            "reference_answer": row.get("reference_answer"),
             "id": row.get("id"),
         }
 
@@ -245,6 +255,19 @@ def build_trainer(config: TrainConfig):
         if config.execute_workflows
         else None
     )
+    judge_client = (
+        OpenAICompatibleClient(
+            base_url=config.judge_base_url,
+            api_key=config.judge_api_key,
+            model=config.judge_model,
+            timeout_seconds=config.judge_timeout_seconds,
+            connect_timeout_seconds=config.judge_connect_timeout_seconds,
+            # judge_attempts is the one authoritative retry policy.
+            max_retries=0,
+        )
+        if config.execute_workflows
+        else None
+    )
     return build_grpo_trainer(
         model=config.model_name,
         train_dataset=train_dataset,
@@ -253,6 +276,10 @@ def build_trainer(config: TrainConfig):
         model_registry=model_registry,
         runner=runner,
         execute_workflows=config.execute_workflows,
+        judge_client=judge_client,
+        judge_max_tokens=config.judge_max_tokens,
+        judge_attempts=config.judge_attempts,
+        judge_retry_delay_seconds=config.judge_retry_delay_seconds,
         eval_dataset=eval_dataset,
         trace_observer=trace_logger,
     )
@@ -283,7 +310,8 @@ def _context_length(processing_class: Any, configured_length: int | None) -> int
     return length
 
 
-def _reward_tier_probe(registry: ModelRegistry) -> None:
+def _structural_reward_probe(registry: ModelRegistry) -> None:
+    """Verify parse/validation rewards without testing answer correctness heuristically."""
     valid_workflow = {
         "task_type": "physics",
         "difficulty": "medium",
@@ -296,7 +324,6 @@ def _reward_tier_probe(registry: ModelRegistry) -> None:
                 "access_list": ["question"],
             }
         ],
-        "final_answer": "4",
     }
     # Renaming the only step does not make a workflow invalid: the runner
     # treats the last entry as the final step regardless of its step_id.
@@ -305,15 +332,31 @@ def _reward_tier_probe(registry: ModelRegistry) -> None:
         **valid_workflow,
         "workflow": [{**valid_workflow["workflow"][0], "access_list": ["solve"]}],
     }
-    valid_incorrect = {**valid_workflow, "final_answer": "5"}
     rewards = compute_reward(
-        ["not json", invalid_workflow, valid_incorrect, valid_workflow],
-        ground_truth=["4"] * 4,
+        ["not json", invalid_workflow, valid_workflow],
+        ground_truth=["4"] * 3,
         model_registry=registry,
+        use_heuristic_answer_matching=False,
     )
-    expected = [MALFORMED_REWARD, INVALID_WORKFLOW_REWARD, VALID_WORKFLOW_REWARD, CORRECT_REWARD]
+    expected = [MALFORMED_REWARD, INVALID_WORKFLOW_REWARD, VALID_WORKFLOW_REWARD]
     if rewards != expected:
-        raise RuntimeError(f"Reward tier probe failed: expected {expected}, got {rewards}.")
+        raise RuntimeError(f"Structural reward probe failed: expected {expected}, got {rewards}.")
+
+
+def _validate_preflight_judgment(trace: RewardTrace, *, judge_model: str) -> None:
+    """Require evidence that the real preflight rollout was judged by Kimi."""
+    if trace.judge_error:
+        raise RuntimeError(f"Kimi judging failed during preflight: {trace.judge_error}")
+    if not isinstance(trace.judge_correct, bool):
+        raise RuntimeError("Preflight rollout completed without a Kimi correctness verdict.")
+    if trace.judge_model != judge_model:
+        raise RuntimeError(
+            f"Preflight used judge model {trace.judge_model!r}; expected {judge_model!r}."
+        )
+    if not isinstance(trace.judge_attempts, int) or trace.judge_attempts < 1:
+        raise RuntimeError(
+            f"Preflight Kimi verdict has an invalid attempt count: {trace.judge_attempts!r}."
+        )
 
 
 def run_preflight(config: TrainConfig) -> None:
@@ -335,7 +378,7 @@ def run_preflight(config: TrainConfig) -> None:
             f"{longest_prompt} prompt tokens + {config.max_completion_length} completion tokens > {context_length}."
         )
 
-    _reward_tier_probe(registry)
+    _structural_reward_probe(registry)
 
     preflight_dir = Path(config.output_dir) / "preflight"
     traces: list[RewardTrace] = []
@@ -372,6 +415,19 @@ def run_preflight(config: TrainConfig) -> None:
         if config.execute_workflows
         else None
     )
+    judge_client = (
+        OpenAICompatibleClient(
+            base_url=config.judge_base_url,
+            api_key=config.judge_api_key,
+            model=config.judge_model,
+            timeout_seconds=config.judge_timeout_seconds,
+            connect_timeout_seconds=config.judge_connect_timeout_seconds,
+            # Avoid hidden SDK retries inside each explicit judge attempt.
+            max_retries=0,
+        )
+        if config.execute_workflows
+        else None
+    )
     trainer = build_grpo_trainer(
         model=config.model_name,
         train_dataset=train_dataset.select(range(2)),
@@ -380,6 +436,10 @@ def run_preflight(config: TrainConfig) -> None:
         model_registry=registry,
         runner=runner,
         execute_workflows=config.execute_workflows,
+        judge_client=judge_client,
+        judge_max_tokens=config.judge_max_tokens,
+        judge_attempts=config.judge_attempts,
+        judge_retry_delay_seconds=config.judge_retry_delay_seconds,
         trace_observer=observe_preflight_traces,
     )
     trainer.train()
@@ -399,14 +459,19 @@ def run_preflight(config: TrainConfig) -> None:
             )
         if any(registry.get(step.model_id).provider != "vllm" for step in generated.task.workflow):
             raise RuntimeError("Parsed workflow used a non-vLLM worker; select a vLLM-only model config for preflight.")
+        _validate_preflight_judgment(generated, judge_model=config.judge_model)
     if not any(preflight_dir.glob("checkpoint-*")):
         raise RuntimeError(f"GRPO preflight did not save a checkpoint in {preflight_dir}.")
 
-    execution_check = "vLLM worker execution, " if config.execute_workflows else "format-only reward, "
+    execution_check = (
+        "vLLM worker execution, batched Kimi judging, "
+        if config.execute_workflows
+        else "format-only structural reward, "
+    )
     print(
         "Preflight passed: 2,000 MegaScience rows, "
         f"{longest_prompt}/{context_length} prompt+completion token budget, "
-        f"parsed conductor workflow, {execution_check}reward tiers, and checkpoint."
+        f"parsed conductor workflow, {execution_check}structural reward tiers, and checkpoint."
     )
 
 
@@ -467,8 +532,16 @@ def parse_args() -> TrainConfig:
     parser.add_argument(
         "--execute-workflows",
         action="store_true",
-        help="Execute generated workflows through worker models while scoring; disabled by default.",
+        help="Execute workflows and score each rollout batch with Kimi; disabled by default.",
     )
+    parser.add_argument("--judge-base-url", default=os.environ.get("KIMI_BASE_URL", DEFAULT_JUDGE_BASE_URL))
+    parser.add_argument("--judge-api-key", default=os.environ.get("KIMI_API_KEY", "change-this"))
+    parser.add_argument("--judge-model", default=os.environ.get("KIMI_MODEL", DEFAULT_JUDGE_MODEL))
+    parser.add_argument("--judge-max-tokens", type=int, default=8192)
+    parser.add_argument("--judge-attempts", type=int, default=3)
+    parser.add_argument("--judge-retry-delay-seconds", type=float, default=1.0)
+    parser.add_argument("--judge-timeout-seconds", type=float, default=600.0)
+    parser.add_argument("--judge-connect-timeout-seconds", type=float, default=30.0)
     parser.add_argument("--bf16", action="store_true", default=None)
     parser.add_argument("--fp16", action="store_true")
     parser.add_argument("--report-to", default="wandb")

@@ -1,14 +1,35 @@
 import time
 from typing import Any
 
+import httpx
 from openai import AsyncOpenAI
 from theo_conductor.schema import ModelResponse
 
 
 class OpenAICompatibleClient:
-    def __init__(self, *, base_url: str, model: str, api_key: str = "EMPTY"):
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        api_key: str = "EMPTY",
+        timeout_seconds: float = 600.0,
+        connect_timeout_seconds: float = 5.0,
+        max_retries: int = 2,
+    ):
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if connect_timeout_seconds <= 0:
+            raise ValueError("connect_timeout_seconds must be positive")
+        if max_retries < 0:
+            raise ValueError("max_retries must be non-negative")
         self.model = model
-        self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        self.client = AsyncOpenAI(
+            base_url=base_url,
+            api_key=api_key,
+            timeout=httpx.Timeout(timeout_seconds, connect=connect_timeout_seconds),
+            max_retries=max_retries,
+        )
 
     async def generate(
         self,

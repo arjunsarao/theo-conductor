@@ -5,13 +5,14 @@ import json
 import re
 import threading
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from pydantic import ValidationError
 from trl.trainer.grpo_config import GRPOConfig
 from trl.trainer.grpo_trainer import GRPOTrainer
 
+from theo_conductor.benchmark import JUDGE_INSTRUCTION, build_judge_batch_question, parse_judge_batch
 from theo_conductor.models.registry import ModelRegistry
 from theo_conductor.runner import Runner
 from theo_conductor.schema import RunResult, Task
@@ -41,11 +42,30 @@ class RewardTrace:
     reward: float
     question: str | None = None
     gold_answer: str | None = None
+    reference_answer: str | None = None
     answer_type: str | None = None
     task: Task | None = None
     run_result: RunResult | None = None
     final_answer: str | None = None
     error: str | None = None
+    judge_correct: bool | None = None
+    judge_model: str | None = None
+    judge_reason: str | None = None
+    judge_response: str | None = None
+    judge_error: str | None = None
+    judge_attempts: int = 0
+
+
+class JudgeBatchError(RuntimeError):
+    """Raised when a rollout batch cannot be judged after all attempts."""
+
+    def __init__(self, attempts: int, cause: BaseException):
+        self.attempts = attempts
+        self.cause = cause
+        super().__init__(
+            f"Kimi judge batch failed after {attempts} attempt{'s' if attempts != 1 else ''}: "
+            f"{type(cause).__name__}: {cause}"
+        )
 
 
 def parse_conductor_json(
@@ -134,8 +154,10 @@ def compute_reward_traces(
     gold_source = ground_truth if ground_truth is not None else kwargs.get("answer", kwargs.get("gold_answer"))
     questions = _as_list(question_source, len(completions))
     gold_answers = _as_list(gold_source, len(completions))
+    reference_answers = _as_list(kwargs.get("reference_answer"), len(completions))
     answer_types = _as_list(kwargs.get("answer_type"), len(completions))
     execute_workflows = bool(kwargs.get("execute_workflows", False))
+    use_heuristic_answer_matching = bool(kwargs.get("use_heuristic_answer_matching", True))
 
     traces: list[RewardTrace] = []
 
@@ -143,6 +165,7 @@ def compute_reward_traces(
         completion_text = _completion_to_text(completion)
         question = questions[index]
         gold_answer = gold_answers[index]
+        reference_answer = reference_answers[index]
         answer_type = answer_types[index]
 
         try:
@@ -154,6 +177,7 @@ def compute_reward_traces(
                     reward=MALFORMED_REWARD,
                     question=question,
                     gold_answer=gold_answer,
+                    reference_answer=reference_answer,
                     answer_type=answer_type,
                     error=str(exc),
                 )
@@ -169,6 +193,7 @@ def compute_reward_traces(
                     reward=INVALID_WORKFLOW_REWARD,
                     question=question,
                     gold_answer=gold_answer,
+                    reference_answer=reference_answer,
                     answer_type=answer_type,
                     error=str(exc),
                 )
@@ -189,6 +214,7 @@ def compute_reward_traces(
                         reward=INVALID_WORKFLOW_REWARD,
                         question=question,
                         gold_answer=gold_answer,
+                        reference_answer=reference_answer,
                         answer_type=answer_type,
                         task=task,
                         error=str(exc),
@@ -198,7 +224,8 @@ def compute_reward_traces(
 
         reward = (
             CORRECT_REWARD
-            if gold_answer is not None
+            if use_heuristic_answer_matching
+            and gold_answer is not None
             and final_answer is not None
             and answers_match(final_answer, gold_answer, answer_type=answer_type)
             else VALID_WORKFLOW_REWARD
@@ -210,6 +237,7 @@ def compute_reward_traces(
                 reward=reward,
                 question=question,
                 gold_answer=gold_answer,
+                reference_answer=reference_answer,
                 answer_type=answer_type,
                 task=task,
                 run_result=run_result,
@@ -218,6 +246,92 @@ def compute_reward_traces(
         )
 
     return traces
+
+
+def judge_reward_traces(
+    traces: Sequence[RewardTrace],
+    *,
+    client: Any,
+    max_tokens: int = 8192,
+    attempts: int = 3,
+    retry_delay_seconds: float = 1.0,
+) -> list[RewardTrace]:
+    """Judge all valid rollouts in one strict Kimi request.
+
+    Structural and execution failures retain their 0.0/0.2 rewards and are not
+    answer-judged. Every otherwise valid rollout is included in one request.
+    A malformed response or request error retries the entire batch; exhausting
+    retries raises ``JudgeBatchError`` instead of substituting a heuristic.
+    """
+    if max_tokens <= 0:
+        raise ValueError("judge max tokens must be positive")
+    if attempts <= 0:
+        raise ValueError("judge attempts must be positive")
+    if retry_delay_seconds < 0:
+        raise ValueError("judge retry delay must be non-negative")
+
+    judgeable = [
+        (index, trace)
+        for index, trace in enumerate(traces)
+        if trace.task is not None and trace.error is None
+    ]
+    if not judgeable:
+        return list(traces)
+
+    records: list[tuple[str, dict[str, Any]]] = []
+    for index, trace in judgeable:
+        response_text = _final_worker_response(trace)
+        records.append(
+            (
+                f"rollout-{index}",
+                {
+                    "question": trace.question,
+                    "reference_answer": trace.reference_answer,
+                    "gold_answer": trace.gold_answer,
+                    "response": response_text,
+                    "extracted_answer": trace.final_answer,
+                },
+            )
+        )
+
+    expected_ids = [item_id for item_id, _ in records]
+
+    async def request_verdicts() -> tuple[dict[str, tuple[bool, str]], int]:
+        last_error: BaseException | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                response = await client.generate(
+                    instruction=JUDGE_INSTRUCTION,
+                    question=build_judge_batch_question(records),
+                    context={},
+                    max_tokens=max_tokens,
+                    temperature=0.0,
+                )
+                return parse_judge_batch(response.text, expected_ids), attempt
+            except Exception as exc:
+                last_error = exc
+                if attempt < attempts and retry_delay_seconds:
+                    await asyncio.sleep(retry_delay_seconds * (2 ** (attempt - 1)))
+        assert last_error is not None
+        raise JudgeBatchError(attempts, last_error) from last_error
+
+    verdicts, attempts_used = _run_async_sync(request_verdicts())
+    judged = list(traces)
+    for (index, trace), (item_id, _) in zip(judgeable, records, strict=True):
+        correct, reason = verdicts[item_id]
+        judged[index] = replace(
+            trace,
+            reward=CORRECT_REWARD if correct else VALID_WORKFLOW_REWARD,
+            judge_correct=correct,
+            judge_model=getattr(client, "model", None),
+            judge_reason=reason,
+            judge_response=json.dumps(
+                {"id": item_id, "correct": correct, "reason": reason},
+                ensure_ascii=False,
+            ),
+            judge_attempts=attempts_used,
+        )
+    return judged
 
 
 def build_grpo_trainer(
@@ -229,13 +343,31 @@ def build_grpo_trainer(
     model_registry: ModelRegistry | None = None,
     runner: Runner | None = None,
     execute_workflows: bool = False,
+    judge_client: Any | None = None,
+    judge_max_tokens: int = 8192,
+    judge_attempts: int = 3,
+    judge_retry_delay_seconds: float = 1.0,
     reward_kwargs: dict[str, Any] | None = None,
     trace_observer: Callable[[Sequence[RewardTrace]], Any] | None = None,
     **trainer_kwargs: Any,
 ) -> GRPOTrainer:
     """Create a ``GRPOTrainer`` configured for conductor reward training."""
 
+    if execute_workflows and judge_client is None:
+        raise ValueError("Executed-workflow training requires a Kimi judge client.")
+    if judge_client is not None:
+        if judge_max_tokens <= 0:
+            raise ValueError("judge max tokens must be positive")
+        if judge_attempts <= 0:
+            raise ValueError("judge attempts must be positive")
+        if judge_retry_delay_seconds < 0:
+            raise ValueError("judge retry delay must be non-negative")
+
     reward_kwargs = {"execute_workflows": execute_workflows, **(reward_kwargs or {})}
+    if judge_client is not None:
+        # Kimi is the sole source of semantic correctness during training.
+        # The local matcher remains available to standalone probes/tests only.
+        reward_kwargs["use_heuristic_answer_matching"] = False
     # Keep the registry for structural model-id validation, but do not give the
     # reward permission to make network worker calls unless explicitly asked.
     if model_registry is not None:
@@ -245,6 +377,31 @@ def build_grpo_trainer(
 
     def reward_func(completions: Sequence[Any], **kwargs: Any) -> list[float]:
         traces = compute_reward_traces(completions, **reward_kwargs, **kwargs)
+        if judge_client is not None:
+            try:
+                traces = judge_reward_traces(
+                    traces,
+                    client=judge_client,
+                    max_tokens=judge_max_tokens,
+                    attempts=judge_attempts,
+                    retry_delay_seconds=judge_retry_delay_seconds,
+                )
+            except JudgeBatchError as exc:
+                if trace_observer is not None:
+                    trace_observer(
+                        [
+                            replace(
+                                trace,
+                                judge_model=getattr(judge_client, "model", None),
+                                judge_error=str(exc),
+                                judge_attempts=exc.attempts,
+                            )
+                            if trace.task is not None and trace.error is None
+                            else trace
+                            for trace in traces
+                        ]
+                    )
+                raise
         if trace_observer is not None:
             trace_observer(traces)
         return [trace.reward for trace in traces]
@@ -388,6 +545,14 @@ def _extract_final_answer(run_result: RunResult) -> str | None:
     return matches[-1].strip() if matches else None
 
 
+def _final_worker_response(trace: RewardTrace) -> str | None:
+    if trace.run_result is None or trace.task is None:
+        return trace.final_answer
+    final_step_id = trace.task.workflow[-1].step_id
+    output = trace.run_result.outputs.get(final_step_id)
+    return output.text if output is not None and output.text.strip() else trace.final_answer
+
+
 def _extract_single_number(answer: str) -> float | None:
     """Extract one finite decimal/scientific value from a short answer."""
 
@@ -489,20 +654,27 @@ def _as_list(value: Any, length: int) -> list[Any]:
 
 
 def _run_runner_sync(runner: Runner, task: Task) -> RunResult:
+    result = _run_async_sync(runner.run(task))
+    if result is None:
+        raise RuntimeError("Runner completed without a result.")
+    return result
+
+
+def _run_async_sync(coroutine: Any) -> Any:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(runner.run(task))
+        return asyncio.run(coroutine)
 
     # TRL can invoke a reward from notebook/server contexts that already own an
     # event loop. Run the optional evaluation in a separate thread in that case.
-    result: RunResult | None = None
+    result: Any = None
     error: BaseException | None = None
 
     def run_in_thread() -> None:
         nonlocal result, error
         try:
-            result = asyncio.run(runner.run(task))
+            result = asyncio.run(coroutine)
         except BaseException as exc:  # Re-raise the worker failure in the caller.
             error = exc
 
@@ -511,6 +683,4 @@ def _run_runner_sync(runner: Runner, task: Task) -> RunResult:
     thread.join()
     if error is not None:
         raise error
-    if result is None:
-        raise RuntimeError("Runner thread completed without a result.")
     return result

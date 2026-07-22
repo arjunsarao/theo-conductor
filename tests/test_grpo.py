@@ -1,13 +1,16 @@
 import asyncio
+import json
 
 import pytest
 
 from theo_conductor.grpo import (
     ConductorParseError,
+    JudgeBatchError,
     answers_match,
     build_grpo_trainer,
     compute_reward_traces,
     compute_reward,
+    judge_reward_traces,
     parse_conductor_json,
 )
 from theo_conductor.models.fake import FakeModelClient
@@ -186,3 +189,102 @@ def test_build_grpo_trainer_keeps_trace_observer_out_of_trl_kwargs(monkeypatch):
     assert rewards == [1.0]
     assert len(traces) == 1
     assert traces[0].reward == 1.0
+
+
+class BatchJudgeClient:
+    def __init__(self, responses):
+        self.responses = iter(responses)
+        self.calls = []
+
+    async def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        response = next(self.responses)
+        if isinstance(response, Exception):
+            raise response
+        return ModelResponse(text=response)
+
+
+def test_judge_reward_traces_sends_the_whole_rollout_batch_once():
+    traces = compute_reward_traces(
+        [VALID_COMPLETION, VALID_COMPLETION.replace('"final_answer": "A"', '"final_answer": "B"')],
+        ground_truth=["A", "A"],
+        question=["First?", "Second?"],
+        reference_answer=["A reference", "Another reference"],
+    )
+    client = BatchJudgeClient(
+        [
+            json.dumps(
+                [
+                    {"id": "rollout-0", "correct": True, "reason": "Matches."},
+                    {"id": "rollout-1", "correct": False, "reason": "Does not match."},
+                ]
+            )
+        ]
+    )
+
+    judged = judge_reward_traces(traces, client=client, retry_delay_seconds=0)
+
+    assert len(client.calls) == 1
+    request_items = json.loads(client.calls[0]["question"].split("\n", 1)[1])
+    assert [item["id"] for item in request_items] == ["rollout-0", "rollout-1"]
+    assert [trace.reward for trace in judged] == [1.0, 0.5]
+    assert [trace.judge_correct for trace in judged] == [True, False]
+    assert all(trace.judge_attempts == 1 for trace in judged)
+
+
+def test_judge_reward_traces_retries_the_batch_then_succeeds():
+    traces = compute_reward_traces([VALID_COMPLETION], ground_truth=["A"])
+    client = BatchJudgeClient(
+        [
+            "not json",
+            '[{"id":"rollout-0","correct":true,"reason":"Matches."}]',
+        ]
+    )
+
+    [judged] = judge_reward_traces(traces, client=client, attempts=2, retry_delay_seconds=0)
+
+    assert len(client.calls) == 2
+    assert judged.reward == 1.0
+    assert judged.judge_attempts == 2
+
+
+def test_judge_reward_traces_raises_after_retries_without_heuristic_fallback():
+    traces = compute_reward_traces([VALID_COMPLETION], ground_truth=["A"])
+    client = BatchJudgeClient([RuntimeError("unavailable"), "still not json"])
+
+    with pytest.raises(JudgeBatchError, match="failed after 2 attempts"):
+        judge_reward_traces(traces, client=client, attempts=2, retry_delay_seconds=0)
+
+    assert len(client.calls) == 2
+
+
+def test_trainer_uses_kimi_verdict_instead_of_local_answer_match(monkeypatch):
+    captured = {}
+
+    class StubTrainer:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("theo_conductor.grpo.GRPOTrainer", StubTrainer)
+    client = BatchJudgeClient(
+        ['[{"id":"rollout-0","correct":false,"reason":"Substantively wrong."}]']
+    )
+    build_grpo_trainer(
+        model="unused",
+        train_dataset=[],
+        args=object(),
+        judge_client=client,
+        judge_retry_delay_seconds=0,
+    )
+
+    rewards = captured["reward_funcs"]([VALID_COMPLETION], ground_truth=["A"])
+
+    assert rewards == [0.5]
+    assert len(client.calls) == 1
+
+
+def test_executed_workflow_trainer_requires_an_explicit_judge_client(monkeypatch):
+    monkeypatch.setattr("theo_conductor.grpo.GRPOTrainer", lambda **kwargs: kwargs)
+
+    with pytest.raises(ValueError, match="requires a Kimi judge client"):
+        build_grpo_trainer(model="unused", train_dataset=[], execute_workflows=True)

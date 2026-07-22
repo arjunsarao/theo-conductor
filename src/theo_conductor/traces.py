@@ -61,6 +61,11 @@ class TrainingTraceLogger:
                 "plan_json",
                 "worker_outputs_json",
                 "error",
+                "judge_correct",
+                "judge_model",
+                "judge_reason",
+                "judge_attempts",
+                "judge_error",
             ]
             rows = [
                 [
@@ -73,6 +78,11 @@ class TrainingTraceLogger:
                     json.dumps(record["plan"], ensure_ascii=False),
                     json.dumps(record["worker_outputs"], ensure_ascii=False),
                     record["error"],
+                    record["judge_correct"],
+                    record["judge_model"],
+                    record["judge_reason"],
+                    record["judge_attempts"],
+                    record["judge_error"],
                 ]
                 for record in records
             ]
@@ -96,8 +106,15 @@ def reward_trace_to_dict(trace: RewardTrace, *, batch: int, index: int, rank: in
         "reward": trace.reward,
         "question": trace.question,
         "gold_answer": trace.gold_answer,
+        "reference_answer": trace.reference_answer,
         "answer_type": trace.answer_type,
         "final_answer": trace.final_answer,
+        "judge_correct": trace.judge_correct,
+        "judge_model": trace.judge_model,
+        "judge_reason": trace.judge_reason,
+        "judge_response": trace.judge_response,
+        "judge_error": trace.judge_error,
+        "judge_attempts": trace.judge_attempts,
         "conductor_completion": trace.completion,
         "plan": plan,
         "worker_outputs": worker_outputs,

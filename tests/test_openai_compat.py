@@ -2,6 +2,8 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
+
 from theo_conductor.models.openai_compat import OpenAICompatibleClient, build_message
 
 
@@ -41,6 +43,33 @@ def test_openai_compatible_client_does_not_constrain_worker_responses():
     asyncio.run(client.generate(instruction="Answer.", question="Question?", context={}))
 
     assert "response_format" not in create.await_args.kwargs
+
+
+def test_openai_compatible_client_configures_transport_timeouts_and_retries():
+    client = OpenAICompatibleClient(
+        base_url="http://localhost:8000/v1",
+        model="judge",
+        timeout_seconds=600,
+        connect_timeout_seconds=30,
+        max_retries=0,
+    )
+
+    assert client.client.timeout.read == 600
+    assert client.client.timeout.connect == 30
+    assert client.client.max_retries == 0
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"timeout_seconds": 0}, "timeout_seconds must be positive"),
+        ({"connect_timeout_seconds": 0}, "connect_timeout_seconds must be positive"),
+        ({"max_retries": -1}, "max_retries must be non-negative"),
+    ],
+)
+def test_openai_compatible_client_rejects_invalid_transport_settings(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        OpenAICompatibleClient(base_url="http://localhost:8000/v1", model="judge", **kwargs)
 
 
 def test_build_message_labels_artifacts_separately_from_step_outputs():

@@ -7,7 +7,6 @@ Evaluate every worker independently on the same untouched test set.
 * Worker A, one call
 * Worker B, one call
 * Worker C, one call
-* Optionally, each worker with repeated sampling at budgets of 3 and 5 calls
 
 ### Report
 
@@ -21,16 +20,6 @@ Evaluate every worker independently on the same untouched test set.
 * Failure rate
 * Answer-extraction or grading failure rate
 * Bootstrap 95% confidence interval
-
-For repeated sampling, additionally report:
-
-* Majority-vote accuracy
-* Oracle accuracy: correct if any sample was correct
-* Mean fraction of correct samples
-
-Treat single-call accuracy as the main worker baseline. Repeated sampling is a compute-matched ensemble baseline rather than the primary worker score.
-
----
 
 ## Experiment 2: Worker complementarity and oracle routing
 

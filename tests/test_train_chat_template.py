@@ -1,11 +1,14 @@
 from datasets import Dataset
+import pytest
 
+from theo_conductor.grpo import RewardTrace
 from theo_conductor.models.fake import FakeModelClient
 from theo_conductor.models.registry import ModelRegistry
 from theo_conductor.schema import ModelSpec
 from theo_conductor.train import (
     TrainConfig,
-    _reward_tier_probe,
+    _structural_reward_probe,
+    _validate_preflight_judgment,
     build_conductor_prompt,
     build_training_args,
     parse_args,
@@ -66,6 +69,7 @@ def test_prepare_grpo_dataset_adds_prompt_and_reward_columns():
                 "question": "What is 2 + 2?",
                 "answer": "A",
                 "answer_type": "multipleChoice",
+                "reference_answer": "The sum is four.",
             }
         ]
     )
@@ -75,6 +79,7 @@ def test_prepare_grpo_dataset_adds_prompt_and_reward_columns():
     assert prepared[0]["question"] == "What is 2 + 2?"
     assert prepared[0]["answer"] == "A"
     assert prepared[0]["answer_type"] == "multipleChoice"
+    assert prepared[0]["reference_answer"] == "The sum is four."
     assert "Output JSON matching this schema" in prepared[0]["prompt"]
 
 
@@ -118,10 +123,39 @@ def test_vllm_training_uses_json_schema_constrained_decoding():
     assert model_id == {"enum": ["solver", 7]}
 
 
-def test_reward_tier_probe_uses_a_semantically_invalid_workflow():
+def test_structural_reward_probe_uses_a_semantically_invalid_workflow():
     registry = ModelRegistry([ModelSpec(model_idx="solver", client=FakeModelClient("solver"))])
 
-    _reward_tier_probe(registry)
+    _structural_reward_probe(registry)
+
+
+def test_preflight_judgment_requires_matching_kimi_metadata():
+    trace = RewardTrace(
+        completion="{}",
+        reward=1.0,
+        judge_correct=True,
+        judge_model="kimi-test",
+        judge_attempts=2,
+    )
+
+    _validate_preflight_judgment(trace, judge_model="kimi-test")
+
+    with pytest.raises(RuntimeError, match="without a Kimi correctness verdict"):
+        _validate_preflight_judgment(
+            RewardTrace(completion="{}", reward=0.5, judge_model="kimi-test", judge_attempts=1),
+            judge_model="kimi-test",
+        )
+    with pytest.raises(RuntimeError, match="expected 'kimi-test'"):
+        _validate_preflight_judgment(
+            RewardTrace(
+                completion="{}",
+                reward=1.0,
+                judge_correct=True,
+                judge_model="other",
+                judge_attempts=1,
+            ),
+            judge_model="kimi-test",
+        )
 
 
 def test_paper_training_defaults_map_to_one_iteration_batch():
@@ -156,6 +190,36 @@ def test_worker_execution_is_cli_opt_in(monkeypatch):
     monkeypatch.setattr("sys.argv", ["train", "--execute-workflows"])
 
     assert parse_args().execute_workflows is True
+
+
+def test_training_judge_cli_configuration(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "train",
+            "--judge-base-url",
+            "http://judge/v1",
+            "--judge-model",
+            "kimi-test",
+            "--judge-attempts",
+            "5",
+            "--judge-retry-delay-seconds",
+            "0.25",
+            "--judge-timeout-seconds",
+            "900",
+            "--judge-connect-timeout-seconds",
+            "45",
+        ],
+    )
+
+    config = parse_args()
+
+    assert config.judge_base_url == "http://judge/v1"
+    assert config.judge_model == "kimi-test"
+    assert config.judge_attempts == 5
+    assert config.judge_retry_delay_seconds == 0.25
+    assert config.judge_timeout_seconds == 900
+    assert config.judge_connect_timeout_seconds == 45
 
 
 def test_isolated_preflight_relaunches_training_in_a_child_process(monkeypatch):

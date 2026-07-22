@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=theo-small-vllm
+#SBATCH --partition=train
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=64
 #SBATCH --mem=0
 #SBATCH --gres=gpu:6
-#SBATCH --time=04:00:00
+#SBATCH --time=12:00:00
 #SBATCH --output=slurm_logs/%x-%j.out
 #SBATCH --error=slurm_logs/%x-%j.err
 
