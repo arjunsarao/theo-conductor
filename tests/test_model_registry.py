@@ -34,6 +34,24 @@ models:
     assert spec.client.model == "solver-model"
 
 
+def test_model_registry_loads_conductor_model_from_yaml_file(tmp_path):
+    config_file = tmp_path / "models.yaml"
+    config_file.write_text(
+        """
+conductor_model: Qwen/Qwen3.5-27B
+models:
+  - model_idx: solver
+    client:
+      base_url: http://localhost:8001/v1
+      model: solver-model
+""",
+    )
+
+    registry = ModelRegistry.from_yaml_file(config_file)
+
+    assert registry.conductor_model == "Qwen/Qwen3.5-27B"
+
+
 def test_model_registry_loads_all_yaml_files_from_config_dir(tmp_path):
     (tmp_path / "first.yaml").write_text(
         """

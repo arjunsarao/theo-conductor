@@ -397,6 +397,7 @@ def build_grpo_trainer(
     judge_retry_delay_seconds: float = 1.0,
     reward_kwargs: dict[str, Any] | None = None,
     trace_observer: Callable[[Sequence[RewardTrace]], Any] | None = None,
+    peft_config: Any | None = None,
     **trainer_kwargs: Any,
 ) -> GRPOTrainer:
     """Create a ``GRPOTrainer`` configured for conductor reward training."""
@@ -488,6 +489,7 @@ def build_grpo_trainer(
         args=args or GRPOConfig(),
         train_dataset=train_dataset,
         processing_class=processing_class,
+        peft_config=peft_config,
         **trainer_kwargs,
     )
     trainer_holder["trainer"] = trainer

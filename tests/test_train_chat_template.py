@@ -9,10 +9,12 @@ from theo_conductor.train import (
     TrainConfig,
     _structural_reward_probe,
     _validate_preflight_judgment,
+    build_lora_config,
     build_conductor_prompt,
     build_training_args,
     parse_args,
     prepare_grpo_dataset,
+    resolve_conductor_model,
     resolve_chat_template,
     run_isolated_preflight,
 )
@@ -162,7 +164,7 @@ def test_paper_training_defaults_map_to_one_iteration_batch():
     config = TrainConfig()
     args = build_training_args(config)
 
-    assert config.model_name == "Qwen/Qwen2.5-7B"
+    assert config.model_name is None
     assert args.max_steps == 200
     assert args.per_device_train_batch_size == 1
     assert args.per_device_eval_batch_size == 8
@@ -186,10 +188,56 @@ def test_paper_training_defaults_map_to_one_iteration_batch():
     assert config.execute_workflows is False
 
 
+def test_conductor_model_resolves_from_config_unless_overridden():
+    registry = ModelRegistry(
+        [ModelSpec(model_idx="solver", client=FakeModelClient("solver"))],
+        conductor_model="Qwen/Qwen3.5-27B",
+    )
+
+    assert resolve_conductor_model(TrainConfig(), registry) == "Qwen/Qwen3.5-27B"
+    assert (
+        resolve_conductor_model(TrainConfig(model_name="custom/conductor"), registry)
+        == "custom/conductor"
+    )
+
+
+def test_lora_config_targets_all_linear_layers(monkeypatch):
+    captured = {}
+
+    class StubLoraConfig:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setitem(__import__("sys").modules, "peft", type("Peft", (), {"LoraConfig": StubLoraConfig}))
+
+    build_lora_config(TrainConfig(lora_rank=8, lora_alpha=16, lora_dropout=0.1))
+
+    assert captured == {
+        "task_type": "CAUSAL_LM",
+        "r": 8,
+        "lora_alpha": 16,
+        "lora_dropout": 0.1,
+        "bias": "none",
+        "target_modules": "all-linear",
+    }
+
+
 def test_worker_execution_is_cli_opt_in(monkeypatch):
     monkeypatch.setattr("sys.argv", ["train", "--execute-workflows"])
 
-    assert parse_args().execute_workflows is True
+    config = parse_args()
+
+    assert config.execute_workflows is True
+    assert config.model_name == "Qwen/Qwen2.5-7B"
+
+
+def test_cli_resolves_large_local_conductor_from_config(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        ["train", "--config-path", "configs/local_large_models.yaml"],
+    )
+
+    assert parse_args().model_name == "Qwen/Qwen3.5-27B"
 
 
 def test_training_judge_cli_configuration(monkeypatch):

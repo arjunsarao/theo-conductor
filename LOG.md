@@ -81,3 +81,5 @@ Today was generally working on the infrastructure surrounding the system, prepar
 ## July 27th, 2026
 
 - More DAG fix-up (simply remove dependency if a step depends on itself.)
+- Move to larger models (120B)
+- Finetune using LoRA instead of full-weight.

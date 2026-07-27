@@ -191,6 +191,20 @@ def test_build_grpo_trainer_keeps_trace_observer_out_of_trl_kwargs(monkeypatch):
     assert traces[0].reward == 1.0
 
 
+def test_build_grpo_trainer_passes_lora_config_to_trl(monkeypatch):
+    monkeypatch.setattr("theo_conductor.grpo.GRPOTrainer", lambda **kwargs: kwargs)
+    lora_config = object()
+
+    trainer = build_grpo_trainer(
+        model="unused",
+        train_dataset=[],
+        args=object(),
+        peft_config=lora_config,
+    )
+
+    assert trainer["peft_config"] is lora_config
+
+
 class BatchJudgeClient:
     def __init__(self, responses):
         self.responses = iter(responses)

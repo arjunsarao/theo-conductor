@@ -7,7 +7,7 @@ Given a json thats supposed to specify a workflow, validate it. A valid workflow
     - access_list: a list of strings specifying the inputs that the model can access. The access_list must include the question and any previous steps that the model needs to access. The access_list must not include any future steps.
     - needs_tools: a boolean indicating whether the model needs to use any tools to complete the step. If needs_tools is true, then the model must have access to the tools specified in the access_list.
 2. The last workflow entry is the final step. It may access whichever earlier step outputs it needs, and it must not access future steps.
-3. The workflow must not have any circular dependencies. A step cannot depend on itself or any future steps.
+3. The workflow must not have any circular dependencies. Self-dependencies are removed, and a step cannot depend on future steps.
 4. The workflow must have a valid task_type and difficulty. The task_type must be a string and the difficulty must be one of "easy", "medium", or "hard".
 5. The workflow must have a valid question. The question must be a string that describes the problem to be solved.
 """
@@ -39,12 +39,12 @@ def validate_task(task: Task, model_registry: ModelRegistry | None = None) -> No
         if not step.instruction.strip():
             raise ValueError(f"Step {step.step_id!r} instruction must be non-empty.")
 
+        step.access_list = [
+            access_key for access_key in step.access_list if access_key != step.step_id
+        ]
         allowed = seen | RESERVED_CONTEXT_KEYS
 
         for access_key in step.access_list:
-            if access_key == step.step_id:
-                raise ValueError(f"Step {step.step_id!r} cannot depend on itself.")
-
             if access_key not in allowed:
                 raise ValueError(f"Step {step.step_id!r} accesses unknown or future key {access_key!r}.")
 

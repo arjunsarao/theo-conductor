@@ -126,20 +126,21 @@ def test_validate_task_rejects_blank_instruction():
         validate_task(task)
 
 
-def test_validate_task_rejects_self_dependency():
+def test_validate_task_removes_self_dependency():
     task = make_task(
         [
             Step(
                 step_id="solve",
                 model_id="solver",
                 instruction="Solve.",
-                access_list=["question", "solve"],
+                access_list=["solve", "question", "solve"],
             )
         ]
     )
 
-    with pytest.raises(ValueError, match="Step 'solve' cannot depend on itself"):
-        validate_task(task)
+    validate_task(task)
+
+    assert task.workflow[0].access_list == ["question"]
 
 
 def test_validate_task_rejects_unknown_or_future_access_key():

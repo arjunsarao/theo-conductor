@@ -10,8 +10,9 @@ from .openai_compat import OpenAICompatibleClient
 
 
 class ModelRegistry:
-    def __init__(self, specs: List[ModelSpec]):
+    def __init__(self, specs: List[ModelSpec], *, conductor_model: str | None = None):
         self._models = {self._key_for(spec): spec for spec in specs}
+        self.conductor_model = conductor_model
 
         if len(self._models) != len(specs):
             raise ValueError("Duplicate model_id found in specs")
@@ -43,7 +44,16 @@ class ModelRegistry:
         if not isinstance(specs, list):
             raise ValueError(f"{path} must contain a list of models or a 'models' list")
 
-        return cls([cls._spec_from_dict(spec, source=path) for spec in specs])
+        conductor_model = data.get("conductor_model") if isinstance(data, dict) else None
+        if conductor_model is not None and (
+            not isinstance(conductor_model, str) or not conductor_model.strip()
+        ):
+            raise ValueError(f"{path} 'conductor_model' must be a non-empty string")
+
+        return cls(
+            [cls._spec_from_dict(spec, source=path) for spec in specs],
+            conductor_model=conductor_model,
+        )
 
     @classmethod
     def from_config_dir(cls, path: str | Path = "configs") -> ModelRegistry:

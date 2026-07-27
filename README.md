@@ -110,6 +110,12 @@ This job requests two GPUs for conductor training. The worker registry is still
 used to build the prompt and validate generated `model_id` values. To execute
 worker workflows during rewards, use `scripts/small_local_model_grpo.sbatch`
 or pass `--execute-workflows` to `python -m theo_conductor.train`.
+The trainable conductor comes from the selected YAML file's top-level
+`conductor_model` field (`Qwen/Qwen2.5-7B` for the small-local config and
+`Qwen/Qwen3.5-27B` for the large-local config). Training updates LoRA adapters
+over all linear layers; use `--lora-rank`, `--lora-alpha`, and
+`--lora-dropout` to tune the adapter, or `--model-name` to override the
+configured base model.
 
 Executed-workflow training uses Kimi K2.6 as the sole semantic correctness
 judge. Every valid rollout is sent as its own judge request, with up to 256

@@ -34,13 +34,12 @@ from theo_conductor.traces import TrainingTraceLogger
 load_dotenv()
 
 
-DEFAULT_MODEL_NAME = "Qwen/Qwen2.5-7B"
 DEFAULT_OUTPUT_DIR = "outputs/grpo-conductor"
 
 
 @dataclass(frozen=True)
 class TrainConfig:
-    model_name: str = DEFAULT_MODEL_NAME
+    model_name: str | None = None
     output_dir: str = DEFAULT_OUTPUT_DIR
     config_path: str = "configs/local_small_models.yaml"
     seed: int = 42
@@ -77,6 +76,9 @@ class TrainConfig:
     judge_connect_timeout_seconds: float = 30.0
     bf16: bool | None = None
     fp16: bool = False
+    lora_rank: int = 16
+    lora_alpha: int = 32
+    lora_dropout: float = 0.05
     report_to: str = "wandb"
     wandb_project: str = "theo-conductor"
     wandb_run_name: str | None = None
@@ -226,10 +228,47 @@ def load_processing_class(model_name: str):
         return AutoTokenizer.from_pretrained(model_name)
 
 
+def resolve_conductor_model(config: TrainConfig, registry: ModelRegistry) -> str:
+    """Resolve the trainable conductor from an override or the worker config."""
+    if config.model_name:
+        return config.model_name
+    if registry.conductor_model:
+        return registry.conductor_model
+    raise ValueError(
+        f"{config.config_path} does not define 'conductor_model'; "
+        "add it to the YAML config or pass --model-name."
+    )
+
+
+def build_lora_config(config: TrainConfig) -> Any:
+    """Build the PEFT adapter configuration used for conductor training."""
+    if config.lora_rank <= 0:
+        raise ValueError("LoRA rank must be positive.")
+    if config.lora_alpha <= 0:
+        raise ValueError("LoRA alpha must be positive.")
+    if not 0 <= config.lora_dropout < 1:
+        raise ValueError("LoRA dropout must be in the range [0, 1).")
+
+    try:
+        from peft import LoraConfig
+    except ImportError as exc:
+        raise RuntimeError("LoRA training requires the 'peft' package.") from exc
+
+    return LoraConfig(
+        task_type="CAUSAL_LM",
+        r=config.lora_rank,
+        lora_alpha=config.lora_alpha,
+        lora_dropout=config.lora_dropout,
+        bias="none",
+        target_modules="all-linear",
+    )
+
+
 def build_trainer(config: TrainConfig):
     if config.report_to == "wandb":
         os.environ.setdefault("WANDB_PROJECT", config.wandb_project)
     model_registry = ModelRegistry.from_yaml_file(config.config_path)
+    conductor_model = resolve_conductor_model(config, model_registry)
     splits = build_megascience_splits(
         seed=config.seed,
         total_samples=2_000,
@@ -241,7 +280,7 @@ def build_trainer(config: TrainConfig):
         max_samples=config.max_train_samples,
     )
     eval_dataset = prepare_grpo_dataset(splits["test"], model_registry)
-    processor = load_processing_class(config.model_name)
+    processor = load_processing_class(conductor_model)
     trace_logger = TrainingTraceLogger(
         config.output_dir,
         log_to_wandb=config.report_to == "wandb",
@@ -270,7 +309,7 @@ def build_trainer(config: TrainConfig):
         else None
     )
     return build_grpo_trainer(
-        model=config.model_name,
+        model=conductor_model,
         train_dataset=train_dataset,
         processing_class=processor,
         args=build_training_args(config, model_registry),
@@ -284,6 +323,7 @@ def build_trainer(config: TrainConfig):
         judge_retry_delay_seconds=config.judge_retry_delay_seconds,
         eval_dataset=eval_dataset,
         trace_observer=trace_logger,
+        peft_config=build_lora_config(config),
     )
 
 
@@ -367,11 +407,12 @@ def run_preflight(config: TrainConfig) -> None:
         raise ValueError("Preflight requires --use-vllm so conductor generation uses vLLM.")
 
     registry = ModelRegistry.from_yaml_file(config.config_path)
+    conductor_model = resolve_conductor_model(config, registry)
     raw_dataset = build_training_dataset(seed=config.seed, max_samples=2_000)
     if len(raw_dataset) != 2_000:
         raise RuntimeError(f"MegaScience preflight requires 2,000 rows, but loaded {len(raw_dataset)}.")
     train_dataset = prepare_grpo_dataset(raw_dataset, registry)
-    processing_class = load_processing_class(config.model_name)
+    processing_class = load_processing_class(conductor_model)
     context_length = _context_length(processing_class, config.max_context_length)
     longest_prompt = max(_prompt_token_count(processing_class, row["prompt"]) for row in train_dataset)
     if longest_prompt + config.max_completion_length > context_length:
@@ -431,7 +472,7 @@ def run_preflight(config: TrainConfig) -> None:
         else None
     )
     trainer = build_grpo_trainer(
-        model=config.model_name,
+        model=conductor_model,
         train_dataset=train_dataset.select(range(2)),
         processing_class=processing_class,
         args=args,
@@ -444,6 +485,7 @@ def run_preflight(config: TrainConfig) -> None:
         judge_attempts=config.judge_attempts,
         judge_retry_delay_seconds=config.judge_retry_delay_seconds,
         trace_observer=observe_preflight_traces,
+        peft_config=build_lora_config(config),
     )
     trainer.train()
 
@@ -480,7 +522,10 @@ def run_preflight(config: TrainConfig) -> None:
 
 def parse_args() -> TrainConfig:
     parser = argparse.ArgumentParser(description="Train the conductor with TRL GRPO.")
-    parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
+    parser.add_argument(
+        "--model-name",
+        help="Override the conductor_model declared in --config-path.",
+    )
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--config-path", default="configs/local_small_models.yaml")
     parser.add_argument("--seed", type=int, default=42)
@@ -548,6 +593,9 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--judge-connect-timeout-seconds", type=float, default=30.0)
     parser.add_argument("--bf16", action="store_true", default=None)
     parser.add_argument("--fp16", action="store_true")
+    parser.add_argument("--lora-rank", type=int, default=16)
+    parser.add_argument("--lora-alpha", type=int, default=32)
+    parser.add_argument("--lora-dropout", type=float, default=0.05)
     parser.add_argument("--report-to", default="wandb")
     parser.add_argument("--wandb-project", default="theo-conductor")
     parser.add_argument("--wandb-run-name")
@@ -561,7 +609,9 @@ def parse_args() -> TrainConfig:
     )
 
     args = parser.parse_args()
-    return TrainConfig(**vars(args))
+    config = TrainConfig(**vars(args))
+    registry = ModelRegistry.from_yaml_file(config.config_path)
+    return replace(config, model_name=resolve_conductor_model(config, registry))
 
 
 def main() -> None:
