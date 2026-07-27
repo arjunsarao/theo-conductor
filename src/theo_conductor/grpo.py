@@ -4,6 +4,8 @@ import asyncio
 import json
 import re
 import threading
+import time
+from types import MethodType
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
@@ -54,16 +56,24 @@ class RewardTrace:
     judge_response: str | None = None
     judge_error: str | None = None
     judge_attempts: int = 0
+    judge_usage: dict[str, Any] | None = None
+    judge_latency_ms: float | None = None
+    conductor_model: str | None = None
+    conductor_usage: dict[str, Any] | None = None
+    conductor_batch_latency_ms: float | None = None
+    conductor_batch_size: int | None = None
 
 
 class JudgeBatchError(RuntimeError):
-    """Raised when a rollout batch cannot be judged after all attempts."""
+    """Raised when a rollout item cannot be judged after all attempts."""
 
-    def __init__(self, attempts: int, cause: BaseException):
+    def __init__(self, attempts: int, cause: BaseException, *, item_id: str | None = None):
         self.attempts = attempts
         self.cause = cause
+        self.item_id = item_id
+        target = f" item {item_id}" if item_id is not None else ""
         super().__init__(
-            f"Kimi judge batch failed after {attempts} attempt{'s' if attempts != 1 else ''}: "
+            f"Kimi judge{target} failed after {attempts} attempt{'s' if attempts != 1 else ''}: "
             f"{type(cause).__name__}: {cause}"
         )
 
@@ -253,18 +263,21 @@ def judge_reward_traces(
     *,
     client: Any,
     max_tokens: int = 8192,
+    concurrency: int = 256,
     attempts: int = 3,
     retry_delay_seconds: float = 1.0,
 ) -> list[RewardTrace]:
-    """Judge all valid rollouts in one strict Kimi request.
+    """Judge each valid rollout in its own bounded-concurrency Kimi request.
 
     Structural and execution failures retain their 0.0/0.2 rewards and are not
-    answer-judged. Every otherwise valid rollout is included in one request.
-    A malformed response or request error retries the entire batch; exhausting
-    retries raises ``JudgeBatchError`` instead of substituting a heuristic.
+    answer-judged. A malformed response or request error retries only that
+    item; exhausting retries raises ``JudgeBatchError`` instead of substituting
+    a heuristic.
     """
     if max_tokens <= 0:
         raise ValueError("judge max tokens must be positive")
+    if concurrency <= 0:
+        raise ValueError("judge concurrency must be positive")
     if attempts <= 0:
         raise ValueError("judge attempts must be positive")
     if retry_delay_seconds < 0:
@@ -294,31 +307,63 @@ def judge_reward_traces(
             )
         )
 
-    expected_ids = [item_id for item_id, _ in records]
-
-    async def request_verdicts() -> tuple[dict[str, tuple[bool, str]], int]:
+    async def request_verdict(
+        item_id: str,
+        record: dict[str, Any],
+        semaphore: asyncio.Semaphore,
+    ) -> tuple[str, bool, str, int, dict[str, Any] | None, float | None]:
         last_error: BaseException | None = None
         for attempt in range(1, attempts + 1):
             try:
-                response = await client.generate(
-                    instruction=JUDGE_INSTRUCTION,
-                    question=build_judge_batch_question(records),
-                    context={},
-                    max_tokens=max_tokens,
-                    temperature=0.0,
+                async with semaphore:
+                    response = await client.generate(
+                        instruction=JUDGE_INSTRUCTION,
+                        question=build_judge_batch_question([(item_id, record)]),
+                        context={},
+                        max_tokens=max_tokens,
+                        temperature=0.0,
+                    )
+                try:
+                    correct, reason = parse_judge_batch(response.text, [item_id])[item_id]
+                except ValueError as exc:
+                    finish_reason = _response_finish_reason(response)
+                    response_tail = response.text[-500:] if response.text else "<empty>"
+                    raise ValueError(
+                        f"{exc}; finish_reason={finish_reason!r}; "
+                        f"response_chars={len(response.text)}; response_tail={response_tail!r}"
+                    ) from exc
+                return (
+                    item_id,
+                    correct,
+                    reason,
+                    attempt,
+                    response.usage,
+                    response.latency_ms,
                 )
-                return parse_judge_batch(response.text, expected_ids), attempt
             except Exception as exc:
                 last_error = exc
                 if attempt < attempts and retry_delay_seconds:
                     await asyncio.sleep(retry_delay_seconds * (2 ** (attempt - 1)))
         assert last_error is not None
-        raise JudgeBatchError(attempts, last_error) from last_error
+        raise JudgeBatchError(attempts, last_error, item_id=item_id) from last_error
 
-    verdicts, attempts_used = _run_async_sync(request_verdicts())
+    async def request_verdicts() -> list[
+        tuple[str, bool, str, int, dict[str, Any] | None, float | None]
+    ]:
+        semaphore = asyncio.Semaphore(concurrency)
+        return await asyncio.gather(
+            *(request_verdict(item_id, record, semaphore) for item_id, record in records)
+        )
+
+    verdicts = {
+        item_id: (correct, reason, attempts_used, usage, latency_ms)
+        for item_id, correct, reason, attempts_used, usage, latency_ms in _run_async_sync(
+            request_verdicts()
+        )
+    }
     judged = list(traces)
     for (index, trace), (item_id, _) in zip(judgeable, records, strict=True):
-        correct, reason = verdicts[item_id]
+        correct, reason, attempts_used, usage, latency_ms = verdicts[item_id]
         judged[index] = replace(
             trace,
             reward=CORRECT_REWARD if correct else VALID_WORKFLOW_REWARD,
@@ -330,6 +375,8 @@ def judge_reward_traces(
                 ensure_ascii=False,
             ),
             judge_attempts=attempts_used,
+            judge_usage=usage,
+            judge_latency_ms=latency_ms,
         )
     return judged
 
@@ -345,6 +392,7 @@ def build_grpo_trainer(
     execute_workflows: bool = False,
     judge_client: Any | None = None,
     judge_max_tokens: int = 8192,
+    judge_concurrency: int = 256,
     judge_attempts: int = 3,
     judge_retry_delay_seconds: float = 1.0,
     reward_kwargs: dict[str, Any] | None = None,
@@ -358,6 +406,8 @@ def build_grpo_trainer(
     if judge_client is not None:
         if judge_max_tokens <= 0:
             raise ValueError("judge max tokens must be positive")
+        if judge_concurrency <= 0:
+            raise ValueError("judge concurrency must be positive")
         if judge_attempts <= 0:
             raise ValueError("judge attempts must be positive")
         if judge_retry_delay_seconds < 0:
@@ -375,14 +425,40 @@ def build_grpo_trainer(
     if runner is not None:
         reward_kwargs.setdefault("runner", runner)
 
+    trainer_holder: dict[str, Any] = {}
+
     def reward_func(completions: Sequence[Any], **kwargs: Any) -> list[float]:
         traces = compute_reward_traces(completions, **reward_kwargs, **kwargs)
+        generation = getattr(
+            trainer_holder.get("trainer"), "_theo_conductor_generation_stats", None
+        )
+        if isinstance(generation, dict):
+            prompt_tokens = generation.get("prompt_tokens") or []
+            completion_tokens = generation.get("completion_tokens") or []
+            if len(prompt_tokens) == len(traces) and len(completion_tokens) == len(traces):
+                traces = [
+                    replace(
+                        trace,
+                        conductor_model=str(model),
+                        conductor_usage={
+                            "prompt_tokens": int(prompt_count),
+                            "completion_tokens": int(completion_count),
+                            "total_tokens": int(prompt_count) + int(completion_count),
+                        },
+                        conductor_batch_latency_ms=generation.get("latency_ms"),
+                        conductor_batch_size=len(traces),
+                    )
+                    for trace, prompt_count, completion_count in zip(
+                        traces, prompt_tokens, completion_tokens, strict=True
+                    )
+                ]
         if judge_client is not None:
             try:
                 traces = judge_reward_traces(
                     traces,
                     client=judge_client,
                     max_tokens=judge_max_tokens,
+                    concurrency=judge_concurrency,
                     attempts=judge_attempts,
                     retry_delay_seconds=judge_retry_delay_seconds,
                 )
@@ -406,7 +482,7 @@ def build_grpo_trainer(
             trace_observer(traces)
         return [trace.reward for trace in traces]
 
-    return GRPOTrainer(
+    trainer = GRPOTrainer(
         model=model,
         reward_funcs=reward_func,
         args=args or GRPOConfig(),
@@ -414,6 +490,27 @@ def build_grpo_trainer(
         processing_class=processing_class,
         **trainer_kwargs,
     )
+    trainer_holder["trainer"] = trainer
+
+    # TRL exposes exact prompt/completion token IDs to its generation method,
+    # but not generation latency to reward callbacks. Capture the full batched
+    # generation wall time so trace throughput is measured rather than inferred
+    # from later workflow/judge timestamps.
+    original_generate = getattr(trainer, "_generate", None)
+    if callable(original_generate):
+        def measured_generate(self: Any, prompts: list[Any]) -> Any:
+            started_at = time.perf_counter()
+            generated = original_generate(prompts)
+            prompt_ids, completion_ids = generated[0], generated[1]
+            self._theo_conductor_generation_stats = {
+                "latency_ms": (time.perf_counter() - started_at) * 1000,
+                "prompt_tokens": [len(ids) for ids in prompt_ids],
+                "completion_tokens": [len(ids) for ids in completion_ids],
+            }
+            return generated
+
+        trainer._generate = MethodType(measured_generate, trainer)
+    return trainer
 
 
 def answers_match(
@@ -684,3 +781,12 @@ def _run_async_sync(coroutine: Any) -> Any:
     if error is not None:
         raise error
     return result
+
+
+def _response_finish_reason(response: Any) -> str | None:
+    """Best-effort extraction of an OpenAI-compatible completion finish reason."""
+    raw = getattr(response, "raw", None)
+    choices = getattr(raw, "choices", None)
+    if not choices:
+        return None
+    return getattr(choices[0], "finish_reason", None)

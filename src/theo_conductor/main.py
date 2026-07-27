@@ -5,6 +5,7 @@ import asyncio
 import json
 import sys
 import time
+import weave
 from pathlib import Path
 from typing import Sequence
 

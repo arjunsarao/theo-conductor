@@ -409,3 +409,7 @@ For a strong initial result, I would prioritize:
 The core headline should be something like:
 
 > At a maximum budget of five worker calls, Theo-Conductor achieved X% accuracy versus Y% for the strongest equal-budget baseline, while using Z worker calls and T generated tokens per question on average.
+
+
+- Bigger Models
+- Add 

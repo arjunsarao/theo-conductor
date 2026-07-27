@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Callable
 import json
+import time
 
 from .artifact import ArtifactStore
 from .scheduler import topological_sort
@@ -29,12 +30,24 @@ class Runner:
         self.worker_temperature = worker_temperature
 
     async def run(self, task: Task) -> RunResult:
+        started_at = time.perf_counter()
         validate_task(task, self.model_registry)
         layers = topological_sort(task)
         outputs: dict[str, StepOutput] = {}
+        active_calls = 0
+        peak_concurrency = 0
+
+        async def tracked_run_step(step: Step) -> StepOutput:
+            nonlocal active_calls, peak_concurrency
+            active_calls += 1
+            peak_concurrency = max(peak_concurrency, active_calls)
+            try:
+                return await self.run_step(step, task, outputs)
+            finally:
+                active_calls -= 1
 
         for layer in layers:
-            layer_results = await asyncio.gather(*[self.run_step(step, task, outputs) for step in layer])
+            layer_results = await asyncio.gather(*[tracked_run_step(step) for step in layer])
 
             for step, result in zip(layer, layer_results):
                 outputs[step.step_id] = result
@@ -44,7 +57,13 @@ class Runner:
             if self.artifact_store is not None
             else []
         )
-        return RunResult(task=task, outputs=outputs, artifacts=artifacts)
+        return RunResult(
+            task=task,
+            outputs=outputs,
+            artifacts=artifacts,
+            observed_wall_time_ms=(time.perf_counter() - started_at) * 1000,
+            observed_peak_concurrency=peak_concurrency,
+        )
 
     async def run_step(self, step: Step, task: Task, outputs: dict[str, StepOutput]) -> StepOutput:
         if self.event_handler:

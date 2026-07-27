@@ -20,7 +20,7 @@ from .models.openai_compat import OpenAICompatibleClient
 
 
 DEFAULT_VALIDATION_SAMPLES = 200
-DEFAULT_JUDGE_BASE_URL = "http://10.10.0.1:80/v1"
+DEFAULT_JUDGE_BASE_URL = "http://10.100.50.35:30080/v1"
 DEFAULT_JUDGE_MODEL = "moonshotai/Kimi-K2.6"
 DEFAULT_INSTRUCTION = (
     "Solve the problem independently. Show enough reasoning to make the result verifiable, then end "
@@ -331,6 +331,56 @@ def summarize_records(
         }
 
     return {"models": models}
+
+
+def oracle_routing_breakdown(records: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Split each oracle-solvable question equally across its correct models."""
+    correct_models: dict[str, set[str]] = defaultdict(set)
+    display_names: dict[str, str] = {}
+    for record in records:
+        question_id = str(
+            record.get("question_sha256")
+            or record.get("example_id")
+            or record.get("question")
+        )
+        correct_models.setdefault(question_id, set())
+        model_id = str(record.get("model_id") or "(missing)")
+        display_names.setdefault(
+            model_id, str(record.get("display_name") or model_id)
+        )
+        if record.get("correct"):
+            correct_models[question_id].add(model_id)
+
+    credits: dict[str, float] = defaultdict(float)
+    solved_questions = 0
+    tied_questions = 0
+    for model_ids in correct_models.values():
+        if not model_ids:
+            continue
+        solved_questions += 1
+        tied_questions += len(model_ids) > 1
+        credit = 1 / len(model_ids)
+        for model_id in model_ids:
+            credits[model_id] += credit
+
+    return {
+        "questions": len(correct_models),
+        "solved_questions": solved_questions,
+        "tied_questions": tied_questions,
+        "models": [
+            {
+                "model_id": model_id,
+                "display_name": display_names[model_id],
+                "oracle_selection_credit": credit,
+                "oracle_selection_share": (
+                    credit / solved_questions if solved_questions else None
+                ),
+            }
+            for model_id, credit in sorted(
+                credits.items(), key=lambda item: (-item[1], item[0])
+            )
+        ],
+    }
 
 
 def _question_fingerprint(question: str) -> str:

@@ -77,3 +77,7 @@ Today was generally working on the infrastructure surrounding the system, prepar
 
 - Removed brittle answer checking based on equivalence and moved to pure LLM-as-a-judge with our Kimi k2.6.
 - Started work on a shared file repository for intermediate artifacts.
+
+## July 27th, 2026
+
+- More DAG fix-up (simply remove dependency if a step depends on itself.)

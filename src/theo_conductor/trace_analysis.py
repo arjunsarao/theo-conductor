@@ -18,6 +18,7 @@ import sys
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -133,6 +134,552 @@ def _number(value: Any) -> float | None:
 
 def _display_number(value: float) -> int | float:
     return int(value) if value.is_integer() else value
+
+
+def _usage_number(usage: Any, *keys: str) -> float | None:
+    if not isinstance(usage, dict):
+        return None
+    for key in keys:
+        value = _number(usage.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _mean(values: Sequence[float]) -> float | None:
+    return sum(values) / len(values) if values else None
+
+
+def _percentile(values: Sequence[float], percentile: float) -> float | None:
+    """Return a linearly interpolated percentile without a numeric dependency."""
+    if not values:
+        return None
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * percentile
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    weight = position - lower
+    return ordered[lower] * (1 - weight) + ordered[upper] * weight
+
+
+def _worker_performance(records: Sequence[TraceRecord]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        outputs = record.data.get("worker_outputs")
+        if not isinstance(outputs, dict):
+            continue
+        for output in outputs.values():
+            if isinstance(output, dict):
+                model_id = output.get("model_id")
+                grouped[str(model_id if model_id is not None else "(missing)")].append(output)
+
+    rows: list[dict[str, Any]] = []
+    for model_id, outputs in grouped.items():
+        latencies = [
+            value
+            for output in outputs
+            if (value := _number(output.get("latency_ms"))) is not None
+        ]
+        prompt_tokens = [
+            value
+            for output in outputs
+            if (value := _usage_number(output.get("usage"), "prompt_tokens", "input_tokens")) is not None
+        ]
+        completion_tokens = [
+            value
+            for output in outputs
+            if (value := _usage_number(output.get("usage"), "completion_tokens", "output_tokens")) is not None
+        ]
+        total_tokens = [
+            value
+            for output in outputs
+            if (value := _usage_number(output.get("usage"), "total_tokens")) is not None
+        ]
+        throughput_samples = [
+            (completion / latency) * 1000
+            for output in outputs
+            if (latency := _number(output.get("latency_ms"))) is not None
+            and latency > 0
+            and (
+                completion := _usage_number(
+                    output.get("usage"), "completion_tokens", "output_tokens"
+                )
+            )
+            is not None
+        ]
+        rows.append(
+            {
+                "model_id": model_id,
+                "runs": len(outputs),
+                "latency_samples": len(latencies),
+                "mean_latency_ms": _mean(latencies),
+                "p95_latency_ms": _percentile(latencies, 0.95),
+                "mean_prompt_tokens": _mean(prompt_tokens),
+                "mean_completion_tokens": _mean(completion_tokens),
+                "mean_total_tokens": _mean(total_tokens),
+                "mean_output_tokens_per_second": _mean(throughput_samples),
+            }
+        )
+    return sorted(rows, key=lambda row: (-row["runs"], row["model_id"]))
+
+
+def _conductor_performance(records: Sequence[TraceRecord]) -> list[dict[str, Any]]:
+    """Aggregate conductor generation data, including legacy token sidecars."""
+    grouped: dict[str, list[tuple[TraceRecord, dict[str, Any]]]] = defaultdict(list)
+    for record in records:
+        performance = record.data.get("conductor_performance")
+        performance = performance if isinstance(performance, dict) else {}
+        usage = performance.get("usage")
+        if not isinstance(usage, dict):
+            usage = {}
+        if record.completion_tokens is not None and not any(
+            key in usage for key in ("completion_tokens", "output_tokens")
+        ):
+            usage = {**usage, "completion_tokens": record.completion_tokens}
+        if not usage and _number(performance.get("batch_latency_ms")) is None:
+            continue
+        model_id = str(performance.get("model_id") or "Conductor")
+        grouped[model_id].append((record, {**performance, "usage": usage}))
+
+    rows: list[dict[str, Any]] = []
+    for model_id, samples in grouped.items():
+        prompt_tokens = [
+            value
+            for _, sample in samples
+            if (value := _usage_number(sample["usage"], "prompt_tokens", "input_tokens")) is not None
+        ]
+        completion_tokens = [
+            value
+            for _, sample in samples
+            if (
+                value := _usage_number(
+                    sample["usage"], "completion_tokens", "output_tokens"
+                )
+            )
+            is not None
+        ]
+        total_tokens = [
+            value
+            for _, sample in samples
+            if (value := _usage_number(sample["usage"], "total_tokens")) is not None
+        ]
+
+        # Batch generation latency is repeated on every rollout in that batch.
+        # Count it once, and divide the batch's total output tokens by it.
+        batches: dict[tuple[str, Any, Any], dict[str, Any]] = {}
+        for record, sample in samples:
+            latency = _number(sample.get("batch_latency_ms"))
+            if latency is None or latency <= 0:
+                continue
+            key = (record.source, record.data.get("rank"), record.data.get("batch"))
+            batch = batches.setdefault(key, {"latency_ms": latency, "completion_tokens": 0.0})
+            completion = _usage_number(
+                sample["usage"], "completion_tokens", "output_tokens"
+            )
+            if completion is not None:
+                batch["completion_tokens"] += completion
+        latencies = [float(batch["latency_ms"]) for batch in batches.values()]
+        throughput_samples = [
+            float(batch["completion_tokens"]) * 1000 / float(batch["latency_ms"])
+            for batch in batches.values()
+            if float(batch["completion_tokens"]) > 0
+        ]
+        rows.append(
+            {
+                "model_id": model_id,
+                "runs": len(samples),
+                "latency_samples": len(latencies),
+                "mean_latency_ms": _mean(latencies),
+                "p95_latency_ms": _percentile(latencies, 0.95),
+                "mean_prompt_tokens": _mean(prompt_tokens),
+                "mean_completion_tokens": _mean(completion_tokens),
+                "mean_total_tokens": _mean(total_tokens),
+                "mean_output_tokens_per_second": _mean(throughput_samples),
+                "role": "conductor",
+                "latency_basis": "generation batch",
+            }
+        )
+    return sorted(rows, key=lambda row: (-row["runs"], row["model_id"]))
+
+
+def _judge_performance(records: Sequence[TraceRecord]) -> list[dict[str, Any]]:
+    """Aggregate successful Kimi judge requests when response metadata exists."""
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        performance = record.data.get("judge_performance")
+        if not isinstance(performance, dict):
+            continue
+        usage = performance.get("usage")
+        usage = usage if isinstance(usage, dict) else {}
+        latency = _number(performance.get("latency_ms"))
+        if not usage and latency is None:
+            continue
+        model_id = str(
+            performance.get("model_id")
+            or record.data.get("judge_model")
+            or "Kimi K2.6 judge"
+        )
+        grouped[model_id].append({**performance, "usage": usage})
+
+    rows: list[dict[str, Any]] = []
+    for model_id, samples in grouped.items():
+        latencies = [
+            value
+            for sample in samples
+            if (value := _number(sample.get("latency_ms"))) is not None
+        ]
+        prompt_tokens = [
+            value
+            for sample in samples
+            if (value := _usage_number(sample["usage"], "prompt_tokens", "input_tokens")) is not None
+        ]
+        completion_tokens = [
+            value
+            for sample in samples
+            if (
+                value := _usage_number(
+                    sample["usage"], "completion_tokens", "output_tokens"
+                )
+            )
+            is not None
+        ]
+        total_tokens = [
+            value
+            for sample in samples
+            if (value := _usage_number(sample["usage"], "total_tokens")) is not None
+        ]
+        throughput_samples = [
+            completion * 1000 / latency
+            for sample in samples
+            if (latency := _number(sample.get("latency_ms"))) is not None
+            and latency > 0
+            and (
+                completion := _usage_number(
+                    sample["usage"], "completion_tokens", "output_tokens"
+                )
+            )
+            is not None
+        ]
+        rows.append(
+            {
+                "model_id": model_id,
+                "runs": len(samples),
+                "latency_samples": len(latencies),
+                "mean_latency_ms": _mean(latencies),
+                "p95_latency_ms": _percentile(latencies, 0.95),
+                "mean_prompt_tokens": _mean(prompt_tokens),
+                "mean_completion_tokens": _mean(completion_tokens),
+                "mean_total_tokens": _mean(total_tokens),
+                "mean_output_tokens_per_second": _mean(throughput_samples),
+                "role": "judge",
+                "latency_basis": "request",
+            }
+        )
+    return sorted(rows, key=lambda row: (-row["runs"], row["model_id"]))
+
+
+def _workflow_steps(plan: Any) -> list[dict[str, Any]]:
+    if not isinstance(plan, dict) or not isinstance(plan.get("workflow"), list):
+        return []
+    return [step for step in plan["workflow"] if isinstance(step, dict)]
+
+
+def _workflow_graph(
+    plan: Any,
+) -> tuple[list[dict[str, Any]], dict[str, set[str]], list[list[str]]]:
+    steps = _workflow_steps(plan)
+    step_ids = {
+        str(step["step_id"])
+        for step in steps
+        if step.get("step_id") is not None
+    }
+    dependencies = {
+        str(step.get("step_id")): {
+            str(access)
+            for access in (step.get("access_list") or [])
+            if str(access) in step_ids
+        }
+        for step in steps
+        if step.get("step_id") is not None
+    }
+    remaining = dict(dependencies)
+    completed: set[str] = set()
+    layers: list[list[str]] = []
+    while remaining:
+        layer = [
+            step_id
+            for step_id, deps in remaining.items()
+            if deps <= completed
+        ]
+        if not layer:
+            # Invalid/cyclic plans still get inspectable structural statistics.
+            layers.append(list(remaining))
+            break
+        layers.append(layer)
+        completed.update(layer)
+        for step_id in layer:
+            remaining.pop(step_id)
+    return steps, dependencies, layers
+
+
+def workflow_to_graphviz(plan: Any) -> str:
+    """Return a safe DOT representation of a conductor workflow."""
+    steps, dependencies, _ = _workflow_graph(plan)
+
+    def quoted(value: Any) -> str:
+        return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
+
+    lines = [
+        "digraph conductor_workflow {",
+        '  rankdir="LR";',
+        '  graph [bgcolor="transparent", pad="0.2", nodesep="0.35", ranksep="0.55"];',
+        '  node [shape="box", style="rounded,filled", fillcolor="#edf4f7", color="#6d8796"];',
+        '  edge [color="#718692"];',
+        '  "__question__" [label="question", shape="oval", fillcolor="#fff7df"];',
+    ]
+    for step in steps:
+        step_id = str(step.get("step_id"))
+        label = f"{step_id}\nmodel: {step.get('model_id', '')}"
+        lines.append(f"  {quoted(step_id)} [label={quoted(label)}];")
+        accesses = [str(value) for value in (step.get("access_list") or [])]
+        if "question" in accesses:
+            lines.append(f'  "__question__" -> {quoted(step_id)};')
+    for step_id, deps in dependencies.items():
+        for dependency in sorted(deps):
+            lines.append(f"  {quoted(dependency)} -> {quoted(step_id)};")
+    lines.append("}")
+    return "\n".join(lines)
+
+
+PLAN_METRIC_NAMES = (
+    "num_steps",
+    "num_edges",
+    "critical_path_steps",
+    "critical_path_runtime",
+    "total_worker_runtime",
+    "maximum_width",
+    "work_span_parallelism",
+    "observed_wall_time",
+    "observed_peak_concurrency",
+    "realized_parallelism",
+    "parallelism_utilization",
+)
+
+
+def _plan_metrics(record: TraceRecord) -> dict[str, Any] | None:
+    steps, dependencies, layers = _workflow_graph(record.data.get("plan"))
+    if not steps:
+        return None
+    step_ids = [str(step.get("step_id")) for step in steps]
+    longest_steps: dict[str, int] = {}
+    for layer in layers:
+        for step_id in layer:
+            longest_steps[step_id] = 1 + max(
+                (longest_steps.get(parent, 0) for parent in dependencies.get(step_id, set())),
+                default=0,
+            )
+
+    outputs = record.data.get("worker_outputs")
+    outputs = outputs if isinstance(outputs, dict) else {}
+    latencies_ms = {
+        step_id: latency
+        for step_id in step_ids
+        if isinstance(outputs.get(step_id), dict)
+        and (latency := _number(outputs[step_id].get("latency_ms"))) is not None
+        and latency >= 0
+    }
+    has_complete_runtime = len(latencies_ms) == len(step_ids)
+    critical_runtime_ms: float | None = None
+    total_runtime_ms: float | None = None
+    if has_complete_runtime:
+        longest_runtime: dict[str, float] = {}
+        for layer in layers:
+            for step_id in layer:
+                longest_runtime[step_id] = latencies_ms[step_id] + max(
+                    (
+                        longest_runtime.get(parent, 0.0)
+                        for parent in dependencies.get(step_id, set())
+                    ),
+                    default=0.0,
+                )
+        critical_runtime_ms = max(longest_runtime.values(), default=0.0)
+        total_runtime_ms = sum(latencies_ms.values())
+
+    runtime = record.data.get("workflow_runtime")
+    runtime = runtime if isinstance(runtime, dict) else {}
+    observed_wall_ms = _number(runtime.get("observed_wall_time_ms"))
+    observed_peak = _number(runtime.get("observed_peak_concurrency"))
+    work_span = (
+        total_runtime_ms / critical_runtime_ms
+        if total_runtime_ms is not None and critical_runtime_ms
+        else None
+    )
+    realized = (
+        total_runtime_ms / observed_wall_ms
+        if total_runtime_ms is not None and observed_wall_ms and observed_wall_ms > 0
+        else None
+    )
+    maximum_width = max((len(layer) for layer in layers), default=0)
+    return {
+        "record_id": record.record_id,
+        "num_steps": len(step_ids),
+        "num_edges": sum(len(parents) for parents in dependencies.values()),
+        "critical_path_steps": max(longest_steps.values(), default=0),
+        "critical_path_runtime": critical_runtime_ms / 1000 if critical_runtime_ms is not None else None,
+        "total_worker_runtime": total_runtime_ms / 1000 if total_runtime_ms is not None else None,
+        "maximum_width": maximum_width,
+        "work_span_parallelism": work_span,
+        "observed_wall_time": observed_wall_ms / 1000 if observed_wall_ms is not None else None,
+        "observed_peak_concurrency": int(observed_peak) if observed_peak is not None else None,
+        "realized_parallelism": realized,
+        "parallelism_utilization": (
+            realized / maximum_width if realized is not None and maximum_width else None
+        ),
+    }
+
+
+def _plan_statistics(records: Sequence[TraceRecord]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    rows = [metrics for record in records if (metrics := _plan_metrics(record)) is not None]
+    aggregate = {
+        name: _mean(
+            [float(row[name]) for row in rows if _number(row.get(name)) is not None]
+        )
+        for name in PLAN_METRIC_NAMES
+    }
+    return rows, aggregate
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _worker_timing(records: Sequence[TraceRecord]) -> dict[str, Any] | None:
+    """Estimate workflow wall time and attribute each layer to its slowest call."""
+    reserved = {"question", "system_prompt", "tool_docs"}
+    model_rows: dict[str, dict[str, float | int | str]] = {}
+    batch_worker_ms: dict[Any, float] = defaultdict(float)
+    batch_timestamps: dict[Any, list[datetime]] = defaultdict(list)
+    total_call_ms = 0.0
+    critical_path_ms = 0.0
+    calls = 0
+
+    for record in records:
+        data = record.data
+        batch = data.get("batch")
+        if (timestamp := _parse_timestamp(data.get("timestamp"))) is not None:
+            batch_timestamps[batch].append(timestamp)
+        outputs = data.get("worker_outputs")
+        workflow = (data.get("plan") or {}).get("workflow")
+        if not isinstance(outputs, dict) or not isinstance(workflow, list):
+            continue
+
+        remaining = {
+            str(step.get("step_id")): step
+            for step in workflow
+            if isinstance(step, dict) and step.get("step_id") is not None
+        }
+        completed: set[str] = set()
+        while remaining:
+            layer = [
+                step
+                for step in remaining.values()
+                if all(
+                    access in completed or access in reserved
+                    for access in (step.get("access_list") or [])
+                )
+            ]
+            if not layer:
+                break
+            layer_calls: list[tuple[float, str]] = []
+            for step in layer:
+                output = outputs.get(str(step.get("step_id")))
+                if not isinstance(output, dict):
+                    continue
+                latency = _number(output.get("latency_ms"))
+                if latency is None or latency < 0:
+                    continue
+                raw_model_id = output.get("model_id")
+                model_id = str(raw_model_id if raw_model_id is not None else "(missing)")
+                row = model_rows.setdefault(
+                    model_id,
+                    {
+                        "model_id": model_id,
+                        "calls": 0,
+                        "total_call_latency_ms": 0.0,
+                        "critical_path_latency_ms": 0.0,
+                        "bottleneck_layers": 0,
+                    },
+                )
+                row["calls"] = int(row["calls"]) + 1
+                row["total_call_latency_ms"] = float(row["total_call_latency_ms"]) + latency
+                total_call_ms += latency
+                calls += 1
+                layer_calls.append((latency, model_id))
+
+            if layer_calls:
+                layer_latency, bottleneck_model = max(layer_calls)
+                critical_path_ms += layer_latency
+                batch_worker_ms[batch] += layer_latency
+                row = model_rows[bottleneck_model]
+                row["critical_path_latency_ms"] = float(row["critical_path_latency_ms"]) + layer_latency
+                row["bottleneck_layers"] = int(row["bottleneck_layers"]) + 1
+            for step in layer:
+                step_id = str(step.get("step_id"))
+                completed.add(step_id)
+                remaining.pop(step_id, None)
+
+    if not calls:
+        return None
+
+    observed_interval_ms = 0.0
+    matched_worker_ms = 0.0
+    observed_batches = 0
+    ordered_batches = sorted(
+        (
+            (min(timestamps), max(timestamps), batch)
+            for batch, timestamps in batch_timestamps.items()
+            if timestamps
+        ),
+        key=lambda item: item[0],
+    )
+    for previous, current in zip(ordered_batches, ordered_batches[1:]):
+        interval_ms = (current[1] - previous[1]).total_seconds() * 1000
+        worker_ms = batch_worker_ms.get(current[2], 0.0)
+        if interval_ms > 0 and worker_ms > 0:
+            observed_interval_ms += interval_ms
+            matched_worker_ms += worker_ms
+            observed_batches += 1
+
+    rows = []
+    for row in model_rows.values():
+        call_latency = float(row["total_call_latency_ms"])
+        critical_latency = float(row["critical_path_latency_ms"])
+        rows.append(
+            {
+                **row,
+                "call_latency_share": call_latency / total_call_ms if total_call_ms else 0,
+                "critical_path_share": critical_latency / critical_path_ms if critical_path_ms else 0,
+            }
+        )
+    rows.sort(key=lambda row: (-float(row["critical_path_latency_ms"]), str(row["model_id"])))
+    return {
+        "calls": calls,
+        "total_call_latency_ms": total_call_ms,
+        "estimated_workflow_latency_ms": critical_path_ms,
+        "parallelism_savings_ms": total_call_ms - critical_path_ms,
+        "observed_batch_intervals": observed_batches,
+        "observed_batch_interval_ms": observed_interval_ms or None,
+        "matched_workflow_latency_ms": matched_worker_ms or None,
+        "workflow_interval_share": (
+            matched_worker_ms / observed_interval_ms if observed_interval_ms else None
+        ),
+        "models": rows,
+    }
 
 
 @dataclass(frozen=True)
@@ -287,6 +834,7 @@ class TraceDataset:
 
     def summary(self, query: TraceQuery | None = None) -> dict[str, Any]:
         records = self.query(query)
+        plan_metrics, plan_statistics = _plan_statistics(records)
         rewards = [_number(r.data.get("reward")) for r in records]
         numeric_rewards = [r for r in rewards if r is not None]
         reward_counts = Counter(numeric_rewards)
@@ -313,6 +861,12 @@ class TraceDataset:
             "completion_tokens": ({"available": len(token_values), "min": min(token_values), "max": max(token_values),
                                    "mean": sum(token_values) / len(token_values),
                                    "saturated": sum(r.completion_saturated is True for r in records)} if token_values else None),
+            "conductor_performance": _conductor_performance(records),
+            "judge_performance": _judge_performance(records),
+            "worker_performance": _worker_performance(records),
+            "worker_timing": _worker_timing(records),
+            "plan_metrics": plan_metrics,
+            "plan_statistics": plan_statistics,
             "malformed_jsonl_lines": self.malformed_lines,
         }
 

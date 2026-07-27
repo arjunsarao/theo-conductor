@@ -23,7 +23,19 @@ conductor completion and parsed JSON plan:
 `trace_viewer.py` is a Streamlit viewer for these files. It shows the reward
 distribution, groups the validation reasons behind the 0.0 and 0.2 reward
 cohorts, and expands each record into its plan, worker outputs, final answer,
-and raw conductor completion.
+and raw conductor completion. Parsed workflows include a Graphviz DAG view.
+The overview reports conductor, worker, and Kimi judge token/latency/throughput
+data, plus plan structure and parallelism metrics. New traces record conductor
+generation-batch latency, successful judge request performance, and actual
+workflow wall time/peak concurrency; legacy traces identify unavailable
+observed fields instead of estimating them.
+
+When a selected GRPO run contains `gpu-memory.csv`, the trace viewer also
+plots device memory and utilization over time. If `gpu-process-memory.csv`
+(or the legacy/alternate `gpo-process-memory.csv` name) is present, it adds
+per-process GPU-memory curves and a peak-memory table. The section also reports
+active-window utilization, saturation and idle duty cycles, memory pressure,
+cross-GPU imbalance, and a clearly labeled heuristic compute-bound assessment.
 
 From the repository root, run:
 
@@ -31,11 +43,10 @@ From the repository root, run:
 uv run streamlit run trace_viewer.py
 ```
 
-The app loads the default `outputs/grpo-11352` rank-0 trace automatically. Use
-the sidebar to open a repository path, load a SLURM job by ID, or upload any
-JSONL trace. A repository trace can also be selected with
-`?trace=path/to/trace.jsonl`. The original `trace_viewer.html` remains available
-as a dependency-free viewer when served from the repository root.
+Use the sidebar's SLURM ID dropdown to select any available
+`outputs/grpo-<SLURM ID>` rank-0 trace. The largest ID is selected by default
+and marked as the latest run. The original `trace_viewer.html` remains
+available as a dependency-free viewer when served from the repository root.
 
 The default trace also has exact conductor-completion token counts, calculated
 with the Qwen conductor tokenizer. For another trace, generate its sidecar:
@@ -101,16 +112,18 @@ worker workflows during rewards, use `scripts/small_local_model_grpo.sbatch`
 or pass `--execute-workflows` to `python -m theo_conductor.train`.
 
 Executed-workflow training uses Kimi K2.6 as the sole semantic correctness
-judge. Every valid rollout passed to one GRPO reward callback is packed into a
-single judge request; malformed or invalid workflows retain their structural
-reward without being answer-judged. The complete request is retried on API or
-schema-validation failures, and training stops if all attempts fail—there is no
-local exact/numeric heuristic fallback. Configure the endpoint with
-`KIMI_BASE_URL`, `KIMI_API_KEY`, and `KIMI_MODEL`; tune failure handling with
-`--judge-attempts`, `--judge-retry-delay-seconds`, `--judge-max-tokens`,
-`--judge-connect-timeout-seconds`, and `--judge-timeout-seconds`. Judge clients
-disable the OpenAI SDK's internal retries so `--judge-attempts` is the exact
-number of batch attempts recorded in training traces.
+judge. Every valid rollout is sent as its own judge request, with up to 256
+requests in flight by default; malformed or invalid workflows retain their
+structural reward without being answer-judged. API or schema-validation
+failures retry only the affected item, and training stops if all attempts for
+an item fail—there is no local exact/numeric heuristic fallback. Configure the
+endpoint with `KIMI_BASE_URL`, `KIMI_API_KEY`, and `KIMI_MODEL`; tune failure
+handling with `--judge-attempts`, `--judge-retry-delay-seconds`,
+`--judge-max-tokens`, `--judge-concurrency`, `--judge-connect-timeout-seconds`,
+and `--judge-timeout-seconds`. The default 8,192-token judge budget includes
+Kimi's reasoning tokens as well as its JSON verdict. Judge clients disable the
+OpenAI SDK's internal retries so `--judge-attempts` is the exact number of item
+attempts recorded in training traces.
 
 ## Small-model MegaScience benchmark
 
@@ -157,16 +170,7 @@ Use `--max-samples 5` for a smoke run. Dataset identity is controlled by
 
 # TODO
 
-- Train the conductor on a single set of models using GRPO on the MegaScience Dataset
-    1. Use DeepSeek-R1-Distill-Qwen-32B as the physics solver.
-    2. Use `Gemma-4-31b-it`as a math solver. (use the 31B dense model)
-    3. Use Qwen2.5-Coder as a coder.
-- Create custom system prompts for conductor and ensemble models.
-- Implement runner/dispatch for various llms (make it configurable)
-- Add HLE benchmarking from huggingface.
-- Question field is added by me, not echoed by the LLM
-- Qwen's context length is >200k tokens.
+- Add bigger models (120B class models)
+- Add term to penalize overly sequential workflows.
 
-Final filtered data is 1830 questions.
-
-Total calls = 1830 questions * 5 steps per workflow * 4 rollouts
+Compare the breakdown

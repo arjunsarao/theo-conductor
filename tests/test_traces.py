@@ -36,6 +36,9 @@ def test_reward_trace_record_contains_plan_and_worker_outputs():
     assert record["plan"]["workflow"][0]["step_id"] == "final"
     assert record["worker_outputs"]["final"]["text"] == "FINAL: 4"
     assert record["gold_answer"] == "4"
+    assert record["workflow_runtime"]["observed_wall_time_ms"] is None
+    assert record["conductor_performance"]["usage"] is None
+    assert record["judge_performance"]["usage"] is None
 
 
 def test_training_trace_logger_appends_jsonl(tmp_path):

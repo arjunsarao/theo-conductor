@@ -201,10 +201,12 @@ class BatchJudgeClient:
         response = next(self.responses)
         if isinstance(response, Exception):
             raise response
+        if isinstance(response, ModelResponse):
+            return response
         return ModelResponse(text=response)
 
 
-def test_judge_reward_traces_sends_the_whole_rollout_batch_once():
+def test_judge_reward_traces_sends_one_request_per_rollout():
     traces = compute_reward_traces(
         [VALID_COMPLETION, VALID_COMPLETION.replace('"final_answer": "A"', '"final_answer": "B"')],
         ground_truth=["A", "A"],
@@ -213,26 +215,87 @@ def test_judge_reward_traces_sends_the_whole_rollout_batch_once():
     )
     client = BatchJudgeClient(
         [
-            json.dumps(
-                [
-                    {"id": "rollout-0", "correct": True, "reason": "Matches."},
-                    {"id": "rollout-1", "correct": False, "reason": "Does not match."},
-                ]
-            )
+            json.dumps([{"id": "rollout-0", "correct": True, "reason": "Matches."}]),
+            json.dumps([{"id": "rollout-1", "correct": False, "reason": "Does not match."}]),
         ]
     )
 
     judged = judge_reward_traces(traces, client=client, retry_delay_seconds=0)
 
-    assert len(client.calls) == 1
-    request_items = json.loads(client.calls[0]["question"].split("\n", 1)[1])
-    assert [item["id"] for item in request_items] == ["rollout-0", "rollout-1"]
+    assert len(client.calls) == 2
+    request_items = [
+        json.loads(call["question"].split("\n", 1)[1])
+        for call in client.calls
+    ]
+    assert [[item["id"] for item in request] for request in request_items] == [
+        ["rollout-0"],
+        ["rollout-1"],
+    ]
+    assert all(call["max_tokens"] == 8192 for call in client.calls)
     assert [trace.reward for trace in judged] == [1.0, 0.5]
     assert [trace.judge_correct for trace in judged] == [True, False]
     assert all(trace.judge_attempts == 1 for trace in judged)
 
 
-def test_judge_reward_traces_retries_the_batch_then_succeeds():
+def test_judge_reward_traces_records_successful_request_performance():
+    traces = compute_reward_traces([VALID_COMPLETION], ground_truth=["A"])
+    client = BatchJudgeClient([
+        ModelResponse(
+            text=json.dumps(
+                [{"id": "rollout-0", "correct": True, "reason": "Matches."}]
+            ),
+            usage={"prompt_tokens": 80, "completion_tokens": 20, "total_tokens": 100},
+            latency_ms=2000,
+        )
+    ])
+    client.model = "kimi-k2.6"
+
+    [judged] = judge_reward_traces(traces, client=client, retry_delay_seconds=0)
+
+    assert judged.judge_model == "kimi-k2.6"
+    assert judged.judge_usage == {
+        "prompt_tokens": 80,
+        "completion_tokens": 20,
+        "total_tokens": 100,
+    }
+    assert judged.judge_latency_ms == 2000
+
+
+def test_judge_reward_traces_bounds_request_concurrency():
+    class ConcurrentJudgeClient:
+        def __init__(self):
+            self.active = 0
+            self.max_active = 0
+
+        async def generate(self, **kwargs):
+            request = json.loads(kwargs["question"].split("\n", 1)[1])
+            item_id = request[0]["id"]
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            await asyncio.sleep(0.01)
+            self.active -= 1
+            return ModelResponse(
+                text=json.dumps([{"id": item_id, "correct": True, "reason": "Matches."}])
+            )
+
+    traces = compute_reward_traces(
+        [VALID_COMPLETION, VALID_COMPLETION, VALID_COMPLETION],
+        ground_truth=["A", "A", "A"],
+    )
+    client = ConcurrentJudgeClient()
+
+    judged = judge_reward_traces(
+        traces,
+        client=client,
+        concurrency=2,
+        retry_delay_seconds=0,
+    )
+
+    assert client.max_active == 2
+    assert [trace.reward for trace in judged] == [1.0, 1.0, 1.0]
+
+
+def test_judge_reward_traces_retries_the_item_then_succeeds():
     traces = compute_reward_traces([VALID_COMPLETION], ground_truth=["A"])
     client = BatchJudgeClient(
         [
@@ -258,6 +321,32 @@ def test_judge_reward_traces_raises_after_retries_without_heuristic_fallback():
     assert len(client.calls) == 2
 
 
+def test_judge_reward_traces_reports_truncated_malformed_response():
+    class Choice:
+        finish_reason = "length"
+
+    class RawResponse:
+        choices = [Choice()]
+
+    class TruncatedJudgeClient:
+        async def generate(self, **kwargs):
+            return ModelResponse(text="", raw=RawResponse())
+
+    traces = compute_reward_traces([VALID_COMPLETION], ground_truth=["A"])
+
+    with pytest.raises(JudgeBatchError) as caught:
+        judge_reward_traces(
+            traces,
+            client=TruncatedJudgeClient(),
+            attempts=1,
+            retry_delay_seconds=0,
+        )
+
+    message = str(caught.value)
+    assert "finish_reason='length'" in message
+    assert "response_chars=0" in message
+
+
 def test_trainer_uses_kimi_verdict_instead_of_local_answer_match(monkeypatch):
     captured = {}
 
@@ -281,6 +370,48 @@ def test_trainer_uses_kimi_verdict_instead_of_local_answer_match(monkeypatch):
 
     assert rewards == [0.5]
     assert len(client.calls) == 1
+
+
+def test_trainer_records_conductor_generation_usage_and_latency(monkeypatch):
+    observed = []
+
+    class StubTrainer:
+        def __init__(self, **kwargs):
+            self.reward_func = kwargs["reward_funcs"]
+
+        def _generate(self, prompts):
+            return (
+                [[1, 2, 3]],
+                [[4, 5]],
+                None,
+                [VALID_COMPLETION],
+                2,
+                None,
+                {},
+                None,
+                [],
+            )
+
+    monkeypatch.setattr("theo_conductor.grpo.GRPOTrainer", StubTrainer)
+    trainer = build_grpo_trainer(
+        model="planner",
+        train_dataset=[],
+        args=object(),
+        trace_observer=observed.extend,
+    )
+
+    trainer._generate(["prompt"])
+    assert trainer.reward_func([VALID_COMPLETION]) == [0.5]
+
+    [trace] = observed
+    assert trace.conductor_model == "planner"
+    assert trace.conductor_usage == {
+        "prompt_tokens": 3,
+        "completion_tokens": 2,
+        "total_tokens": 5,
+    }
+    assert trace.conductor_batch_latency_ms is not None
+    assert trace.conductor_batch_size == 1
 
 
 def test_executed_workflow_trainer_requires_an_explicit_judge_client(monkeypatch):

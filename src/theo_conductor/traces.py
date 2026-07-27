@@ -115,8 +115,27 @@ def reward_trace_to_dict(trace: RewardTrace, *, batch: int, index: int, rank: in
         "judge_response": trace.judge_response,
         "judge_error": trace.judge_error,
         "judge_attempts": trace.judge_attempts,
+        "judge_performance": {
+            "model_id": trace.judge_model,
+            "usage": trace.judge_usage,
+            "latency_ms": trace.judge_latency_ms,
+        },
         "conductor_completion": trace.completion,
+        "conductor_performance": {
+            "model_id": trace.conductor_model,
+            "usage": trace.conductor_usage,
+            "batch_latency_ms": trace.conductor_batch_latency_ms,
+            "batch_size": trace.conductor_batch_size,
+        },
         "plan": plan,
         "worker_outputs": worker_outputs,
+        "workflow_runtime": (
+            {
+                "observed_wall_time_ms": trace.run_result.observed_wall_time_ms,
+                "observed_peak_concurrency": trace.run_result.observed_peak_concurrency,
+            }
+            if trace.run_result is not None
+            else None
+        ),
         "error": trace.error,
     }

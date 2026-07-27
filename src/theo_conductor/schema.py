@@ -51,6 +51,8 @@ class RunResult(BaseModel):
     task: Task
     outputs: Dict[str, StepOutput]
     artifacts: List[Dict[str, Any]] = Field(default_factory=list)
+    observed_wall_time_ms: float | None = None
+    observed_peak_concurrency: int | None = None
 
 
 @dataclass(frozen=True)

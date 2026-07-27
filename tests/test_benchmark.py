@@ -5,6 +5,7 @@ from theo_conductor.benchmark import (
     bootstrap_accuracy_ci,
     extract_final_answer,
     judge_records,
+    oracle_routing_breakdown,
     parse_judge_batch,
     run_benchmark,
     summarize_records,
@@ -173,6 +174,37 @@ def test_summary_reports_accuracy_failures_usage_and_subjects():
     assert metrics["mean_prompt_tokens"] == 15
     assert metrics["mean_latency_ms"] == 30
     assert metrics["by_subject"]["physics"]["accuracy"] == 0.5
+
+
+def test_oracle_routing_breakdown_splits_ties_between_correct_models():
+    records = [
+        {"model_id": "a", "display_name": "A", "example_id": "q1", "correct": True},
+        {"model_id": "b", "display_name": "B", "example_id": "q1", "correct": True},
+        {"model_id": "a", "display_name": "A", "example_id": "q2", "correct": False},
+        {"model_id": "b", "display_name": "B", "example_id": "q2", "correct": True},
+        {"model_id": "a", "display_name": "A", "example_id": "q3", "correct": False},
+        {"model_id": "b", "display_name": "B", "example_id": "q3", "correct": False},
+    ]
+
+    breakdown = oracle_routing_breakdown(records)
+
+    assert breakdown["questions"] == 3
+    assert breakdown["solved_questions"] == 2
+    assert breakdown["tied_questions"] == 1
+    assert breakdown["models"] == [
+        {
+            "model_id": "b",
+            "display_name": "B",
+            "oracle_selection_credit": 1.5,
+            "oracle_selection_share": 0.75,
+        },
+        {
+            "model_id": "a",
+            "display_name": "A",
+            "oracle_selection_credit": 0.5,
+            "oracle_selection_share": 0.25,
+        },
+    ]
 
 
 def test_bootstrap_accuracy_ci_is_deterministic():

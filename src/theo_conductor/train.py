@@ -70,6 +70,7 @@ class TrainConfig:
     judge_api_key: str = "change-this"
     judge_model: str = DEFAULT_JUDGE_MODEL
     judge_max_tokens: int = 8192
+    judge_concurrency: int = 256
     judge_attempts: int = 3
     judge_retry_delay_seconds: float = 1.0
     judge_timeout_seconds: float = 600.0
@@ -278,6 +279,7 @@ def build_trainer(config: TrainConfig):
         execute_workflows=config.execute_workflows,
         judge_client=judge_client,
         judge_max_tokens=config.judge_max_tokens,
+        judge_concurrency=config.judge_concurrency,
         judge_attempts=config.judge_attempts,
         judge_retry_delay_seconds=config.judge_retry_delay_seconds,
         eval_dataset=eval_dataset,
@@ -438,6 +440,7 @@ def run_preflight(config: TrainConfig) -> None:
         execute_workflows=config.execute_workflows,
         judge_client=judge_client,
         judge_max_tokens=config.judge_max_tokens,
+        judge_concurrency=config.judge_concurrency,
         judge_attempts=config.judge_attempts,
         judge_retry_delay_seconds=config.judge_retry_delay_seconds,
         trace_observer=observe_preflight_traces,
@@ -464,7 +467,7 @@ def run_preflight(config: TrainConfig) -> None:
         raise RuntimeError(f"GRPO preflight did not save a checkpoint in {preflight_dir}.")
 
     execution_check = (
-        "vLLM worker execution, batched Kimi judging, "
+        "vLLM worker execution, per-item Kimi judging, "
         if config.execute_workflows
         else "format-only structural reward, "
     )
@@ -532,12 +535,13 @@ def parse_args() -> TrainConfig:
     parser.add_argument(
         "--execute-workflows",
         action="store_true",
-        help="Execute workflows and score each rollout batch with Kimi; disabled by default.",
+        help="Execute workflows and score each valid rollout with Kimi; disabled by default.",
     )
     parser.add_argument("--judge-base-url", default=os.environ.get("KIMI_BASE_URL", DEFAULT_JUDGE_BASE_URL))
     parser.add_argument("--judge-api-key", default=os.environ.get("KIMI_API_KEY", "change-this"))
     parser.add_argument("--judge-model", default=os.environ.get("KIMI_MODEL", DEFAULT_JUDGE_MODEL))
     parser.add_argument("--judge-max-tokens", type=int, default=8192)
+    parser.add_argument("--judge-concurrency", type=int, default=256)
     parser.add_argument("--judge-attempts", type=int, default=3)
     parser.add_argument("--judge-retry-delay-seconds", type=float, default=1.0)
     parser.add_argument("--judge-timeout-seconds", type=float, default=600.0)

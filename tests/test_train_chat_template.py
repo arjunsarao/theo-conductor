@@ -203,6 +203,10 @@ def test_training_judge_cli_configuration(monkeypatch):
             "kimi-test",
             "--judge-attempts",
             "5",
+            "--judge-concurrency",
+            "128",
+            "--judge-max-tokens",
+            "384",
             "--judge-retry-delay-seconds",
             "0.25",
             "--judge-timeout-seconds",
@@ -217,6 +221,8 @@ def test_training_judge_cli_configuration(monkeypatch):
     assert config.judge_base_url == "http://judge/v1"
     assert config.judge_model == "kimi-test"
     assert config.judge_attempts == 5
+    assert config.judge_concurrency == 128
+    assert config.judge_max_tokens == 384
     assert config.judge_retry_delay_seconds == 0.25
     assert config.judge_timeout_seconds == 900
     assert config.judge_connect_timeout_seconds == 45

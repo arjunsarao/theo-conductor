@@ -22,7 +22,7 @@ from theo_conductor.benchmark import (  # noqa: E402
 from theo_conductor.models.openai_compat import build_message  # noqa: E402
 
 
-BASE_URL = "http://10.10.0.1:80/v1"
+BASE_URL = "http://10.100.50.35:30080/v1"
 API_KEY = "change-this"
 TARGET_MODEL = "moonshotai/Kimi-K2.6"
 

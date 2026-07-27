@@ -19,13 +19,32 @@ import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
-from theo_conductor.trace_analysis import TraceDataset, TraceQuery, TraceRecord, error_category
+from theo_conductor.trace_analysis import (
+    PLAN_METRIC_NAMES,
+    TraceDataset,
+    TraceQuery,
+    TraceRecord,
+    error_category,
+    workflow_to_graphviz,
+)
+from theo_conductor.benchmark import oracle_routing_breakdown
 
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_TRACE = ROOT / "outputs/grpo-11352/traces/plans-and-worker-outputs-rank-0.jsonl"
 DEFAULT_MEGASCIENCE_DIR = ROOT / "outputs/megascience-small-models"
+TRACE_FILENAME = "plans-and-worker-outputs-rank-0.jsonl"
 PAGE_SIZE = 80
+MEMORY_CHART_MAX_ROWS = 4_000
+GPU_ROLES = {
+    0: "DeepSeek TP0",
+    1: "DeepSeek TP1",
+    2: "Gemma TP0",
+    3: "Gemma TP1",
+    4: "Qwen Coder TP0",
+    5: "Qwen Coder TP1",
+    6: "Conductor primary",
+    7: "Conductor secondary",
+}
 REWARD_COLORS = {0.0: "#c94848", 0.2: "#e87817", 0.5: "#f2c94c", 1.0: "#318260"}
 DIFFICULTY_COLORS = {"easy": "#318260", "medium": "#f2c94c", "hard": "#c94848"}
 ERROR_STYLES = (
@@ -134,36 +153,232 @@ def load_megascience(summary_path: str, results_path: str, modified_ns: tuple[in
     return summary, records
 
 
-def selected_dataset() -> tuple[TraceDataset, str]:
-    query_trace = st.query_params.get("trace")
-    default_value = str(query_trace) if query_trace else str(DEFAULT_TRACE.relative_to(ROOT))
-    source = st.sidebar.radio("Trace source", ("Repository path", "SLURM job", "Upload JSONL"))
-    if source == "Upload JSONL":
-        upload = st.sidebar.file_uploader("Trace file", type=("jsonl", "json"))
-        if upload is None:
-            st.info("Upload a JSONL trace to begin.")
-            st.stop()
-        return load_upload(upload.getvalue(), upload.name), upload.name
+@st.cache_data(show_spinner=False)
+def load_memory_telemetry(
+    gpu_path: str,
+    process_path: str | None,
+    modified_ns: tuple[int, int],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load and normalize whole-GPU and per-process memory telemetry."""
+    del modified_ns
+    gpu = pd.read_csv(gpu_path, skipinitialspace=True)
+    gpu.columns = [str(column).strip() for column in gpu.columns]
+    required_gpu = {
+        "timestamp",
+        "gpu_index",
+        "gpu_uuid",
+        "memory_used_mib",
+        "memory_total_mib",
+        "utilization_gpu_percent",
+    }
+    missing_gpu = required_gpu - set(gpu.columns)
+    if missing_gpu:
+        raise ValueError(f"gpu-memory.csv is missing columns: {', '.join(sorted(missing_gpu))}")
+    gpu["timestamp"] = pd.to_datetime(gpu["timestamp"], utc=True, errors="coerce")
+    for column in (
+        "gpu_index",
+        "memory_used_mib",
+        "memory_total_mib",
+        "utilization_gpu_percent",
+    ):
+        gpu[column] = pd.to_numeric(gpu[column], errors="coerce")
+    gpu["gpu_uuid"] = gpu["gpu_uuid"].astype(str).str.strip()
+    gpu = gpu.dropna(subset=["timestamp", "gpu_index", "memory_used_mib"]).copy()
+    gpu["gpu_index"] = gpu["gpu_index"].astype(int)
+    start = gpu["timestamp"].min()
+    gpu["elapsed_minutes"] = (gpu["timestamp"] - start).dt.total_seconds() / 60
+    gpu["used_gib"] = gpu["memory_used_mib"] / 1024
+    gpu["total_gib"] = gpu["memory_total_mib"] / 1024
+    gpu["gpu"] = gpu["gpu_index"].map(
+        lambda index: f"GPU {index} · {GPU_ROLES.get(index, 'unassigned')}"
+    )
 
-    if source == "SLURM job":
-        job_id = st.sidebar.text_input("SLURM job ID", placeholder="11352")
-        if not job_id:
-            st.info("Enter a SLURM job ID in the sidebar.")
-            st.stop()
-        if not job_id[0].isdigit() or any(char not in "0123456789_-" for char in job_id):
-            raise ValueError("Job IDs must begin with a number and contain only numbers, '_' or '-'.")
-        relative = Path(f"outputs/grpo-{job_id}/traces/plans-and-worker-outputs-rank-0.jsonl")
+    if process_path is None:
+        return gpu, pd.DataFrame()
+    process = pd.read_csv(process_path, skipinitialspace=True)
+    process.columns = [str(column).strip() for column in process.columns]
+    required_process = {
+        "timestamp",
+        "gpu_uuid",
+        "pid",
+        "process_name",
+        "used_memory_mib",
+    }
+    missing_process = required_process - set(process.columns)
+    if missing_process:
+        raise ValueError(
+            f"{Path(process_path).name} is missing columns: {', '.join(sorted(missing_process))}"
+        )
+    process["timestamp"] = pd.to_datetime(process["timestamp"], utc=True, errors="coerce")
+    process["pid"] = pd.to_numeric(process["pid"], errors="coerce")
+    process["used_memory_mib"] = pd.to_numeric(process["used_memory_mib"], errors="coerce")
+    process["gpu_uuid"] = process["gpu_uuid"].astype(str).str.strip()
+    process["process_name"] = process["process_name"].astype(str).str.strip()
+    process = process.dropna(subset=["timestamp", "pid", "used_memory_mib"]).copy()
+    uuid_to_gpu = (
+        gpu[["gpu_uuid", "gpu_index"]]
+        .drop_duplicates("gpu_uuid")
+        .set_index("gpu_uuid")["gpu_index"]
+    )
+    process["gpu_index"] = process["gpu_uuid"].map(uuid_to_gpu)
+    process = process.dropna(subset=["gpu_index"]).copy()
+    process["gpu_index"] = process["gpu_index"].astype(int)
+    process["pid"] = process["pid"].astype(int)
+    process["elapsed_minutes"] = (process["timestamp"] - start).dt.total_seconds() / 60
+    process["used_gib"] = process["used_memory_mib"] / 1024
+    process["process"] = process.apply(
+        lambda row: (
+            f"GPU {row['gpu_index']} · {row['process_name']} · PID {row['pid']}"
+        ),
+        axis=1,
+    )
+    return gpu, process
+
+
+def downsample_peaks(
+    frame: pd.DataFrame,
+    *,
+    series_column: str,
+    value_column: str,
+    max_rows: int = MEMORY_CHART_MAX_ROWS,
+) -> pd.DataFrame:
+    """Bound chart size while retaining the peak sample in each time bucket."""
+    if len(frame) <= max_rows or frame.empty:
+        return frame
+    ordered = frame.sort_values([series_column, "timestamp"]).copy()
+    series_count = max(int(ordered[series_column].nunique()), 1)
+    points_per_series = max(max_rows // series_count, 2)
+    positions = ordered.groupby(series_column, sort=False).cumcount()
+    sizes = ordered.groupby(series_column, sort=False)[series_column].transform("size")
+    strides = ((sizes + points_per_series - 1) // points_per_series).clip(lower=1)
+    ordered["_bucket"] = positions // strides
+    peak_indices = ordered.groupby(
+        [series_column, "_bucket"], sort=False
+    )[value_column].idxmax()
+    return ordered.loc[peak_indices].drop(columns="_bucket").sort_values("timestamp")
+
+
+def gpu_pressure_statistics(
+    gpu: pd.DataFrame,
+) -> tuple[dict[str, float | str], pd.DataFrame]:
+    """Summarize utilization duty cycle, memory pressure, and device imbalance."""
+    valid = gpu.dropna(
+        subset=[
+            "timestamp",
+            "gpu_index",
+            "used_gib",
+            "total_gib",
+            "utilization_gpu_percent",
+        ]
+    ).copy()
+    valid = valid[valid["total_gib"] > 0]
+    if valid.empty:
+        return {}, pd.DataFrame()
+
+    valid["memory_fraction"] = valid["used_gib"] / valid["total_gib"]
+    utilization_by_time = valid.pivot_table(
+        index="timestamp",
+        columns="gpu_index",
+        values="utilization_gpu_percent",
+        aggfunc="mean",
+    )
+    active_times = utilization_by_time.max(axis=1) > 10
+    active_timestamps = set(utilization_by_time.index[active_times])
+    active = valid[valid["timestamp"].isin(active_timestamps)]
+    if active.empty:
+        active = valid
+    active_spread = utilization_by_time.loc[active_times].max(axis=1) - utilization_by_time.loc[
+        active_times
+    ].min(axis=1)
+    if active_spread.empty:
+        active_spread = utilization_by_time.max(axis=1) - utilization_by_time.min(axis=1)
+
+    active_mean = float(active["utilization_gpu_percent"].mean())
+    active_busy_share = float((active["utilization_gpu_percent"] >= 90).mean())
+    overall_idle_share = float((valid["utilization_gpu_percent"] <= 10).mean())
+    peak_memory_fraction = float(valid["memory_fraction"].max())
+    memory_pressure_share = float((valid["memory_fraction"] >= 0.9).mean())
+    p95_spread = float(active_spread.quantile(0.95))
+
+    if memory_pressure_share >= 0.2 or peak_memory_fraction >= 0.98:
+        if active_mean >= 70 and active_busy_share >= 0.4:
+            assessment = (
+                "High compute saturation and high memory pressure: the run may be constrained by "
+                "both accelerator throughput and memory capacity."
+            )
+        else:
+            assessment = (
+                "Memory-capacity pressure is stronger than the compute-saturation signal."
+            )
+    elif active_mean >= 70 and active_busy_share >= 0.4:
+        assessment = (
+            "Strong compute-bound signal: GPUs remain highly utilized during active windows "
+            "without sustained near-capacity memory use."
+        )
+    elif overall_idle_share >= 0.4 or active_mean < 40:
+        assessment = (
+            "Weak compute-bound signal: substantial low-utilization time suggests input, CPU, "
+            "communication, synchronization, or scheduling stalls."
+        )
+    elif p95_spread >= 50:
+        assessment = (
+            "Uneven compute utilization: one or more GPUs frequently wait while others are busy."
+        )
     else:
-        relative = Path(st.sidebar.text_input("Trace path", value=default_value))
+        assessment = (
+            "Mixed utilization signal: this telemetry alone does not identify a dominant bottleneck."
+        )
 
-    path = relative if relative.is_absolute() else ROOT / relative
-    path = path.resolve()
-    try:
-        path.relative_to(ROOT)
-    except ValueError as exc:
-        raise ValueError("Repository trace paths must stay inside the repository.") from exc
-    if not path.is_file():
-        raise FileNotFoundError(f"Trace not found: {path}")
+    per_gpu = (
+        valid.groupby(["gpu_index", "gpu"], as_index=False)
+        .agg(
+            mean_utilization=("utilization_gpu_percent", "mean"),
+            p95_utilization=("utilization_gpu_percent", lambda values: values.quantile(0.95)),
+            busy_share=("utilization_gpu_percent", lambda values: (values >= 90).mean()),
+            idle_share=("utilization_gpu_percent", lambda values: (values <= 10).mean()),
+            peak_used_gib=("used_gib", "max"),
+            capacity_gib=("total_gib", "max"),
+            peak_memory_fraction=("memory_fraction", "max"),
+        )
+        .sort_values("gpu_index")
+    )
+    return (
+        {
+            "mean_utilization": float(valid["utilization_gpu_percent"].mean()),
+            "active_mean_utilization": active_mean,
+            "p95_utilization": float(valid["utilization_gpu_percent"].quantile(0.95)),
+            "active_busy_share": active_busy_share,
+            "overall_idle_share": overall_idle_share,
+            "peak_memory_fraction": peak_memory_fraction,
+            "memory_pressure_share": memory_pressure_share,
+            "p95_utilization_spread": p95_spread,
+            "minimum_headroom_gib": float((valid["total_gib"] - valid["used_gib"]).min()),
+            "assessment": assessment,
+        },
+        per_gpu,
+    )
+
+
+def selected_dataset() -> tuple[TraceDataset, str]:
+    traces: dict[int, Path] = {}
+    for output_dir in (ROOT / "outputs").glob("grpo-*"):
+        job_id = output_dir.name.removeprefix("grpo-")
+        path = output_dir / "traces" / TRACE_FILENAME
+        if job_id.isdigit() and path.is_file():
+            traces[int(job_id)] = path
+
+    if not traces:
+        st.info(f"No SLURM traces found at outputs/grpo-<SLURM ID>/traces/{TRACE_FILENAME}.")
+        st.stop()
+
+    job_ids = sorted(traces, reverse=True)
+    latest_job_id = job_ids[0]
+    job_id = st.sidebar.selectbox(
+        "SLURM ID",
+        job_ids,
+        format_func=lambda value: f"{value} (latest)" if value == latest_job_id else str(value),
+    )
+    path = traces[job_id]
     return load_path(str(path), path.stat().st_mtime_ns), str(path.relative_to(ROOT))
 
 
@@ -208,9 +423,8 @@ def render_overview(dataset: TraceDataset, error_styles: dict[str, tuple[str, st
         (f'{summary["parsed_plans"]:,}', "Parsed plans"),
         (f'{summary["worker_runs"]:,}', "Worker runs"),
         (f'{summary["unique_questions"]:,}', "Unique questions"),
-        (f'{token_info["max"]:,}' if token_info else "—", "Max conductor tokens"),
     )
-    columns = st.columns(6)
+    columns = st.columns(5)
     for column, (value, label) in zip(columns, values, strict=True):
         column.metric(label, value)
 
@@ -218,15 +432,55 @@ def render_overview(dataset: TraceDataset, error_styles: dict[str, tuple[str, st
     plans = [record.data["plan"] for record in records if isinstance(record.data.get("plan"), dict)]
     steps = [step for plan in plans for step in plan.get("workflow", []) if isinstance(step, dict)]
     multi_step = sum(len(plan.get("workflow", [])) > 1 for plan in plans)
-    models = Counter(str(step.get("model_id") or "(missing)") for step in steps)
+    models = Counter(
+        str(step["model_id"] if step.get("model_id") is not None else "(missing)")
+        for step in steps
+    )
     plan_values = (
         (f"{len(steps) / len(plans):.2f}" if plans else "—", "Mean planned steps"),
         (f"{multi_step / len(plans):.1%}" if plans else "—", "Multi-step plans"),
-        (f'{token_info["mean"]:,.1f}' if token_info else "—", "Mean conductor tokens"),
+        (f'{token_info["mean"]:,.1f}' if token_info else "—", "Average conductor tokens thus far"),
     )
     columns = st.columns(3)
     for column, (value, label) in zip(columns, plan_values, strict=True):
         column.metric(label, value)
+
+    metric_labels = {
+        "num_steps": "num_steps",
+        "num_edges": "num_edges",
+        "critical_path_steps": "critical_path_steps",
+        "critical_path_runtime": "critical_path_runtime (s)",
+        "total_worker_runtime": "total_worker_runtime (s)",
+        "maximum_width": "maximum_width",
+        "work_span_parallelism": "work_span_parallelism",
+        "observed_wall_time": "observed_wall_time (s)",
+        "observed_peak_concurrency": "observed_peak_concurrency",
+        "realized_parallelism": "realized_parallelism",
+        "parallelism_utilization": "parallelism_utilization",
+    }
+    plan_metrics = summary.get("plan_metrics") or []
+    plan_statistics = summary.get("plan_statistics") or {}
+    statistics_rows = [
+        {
+            "Metric": metric_labels[name],
+            "Mean": plan_statistics.get(name),
+            "Plans with data": sum(row.get(name) is not None for row in plan_metrics),
+        }
+        for name in PLAN_METRIC_NAMES
+    ]
+    st.dataframe(
+        pd.DataFrame(statistics_rows),
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Mean": st.column_config.NumberColumn(format="%.3f"),
+            "Plans with data": st.column_config.NumberColumn(format="%d"),
+        },
+    )
+    st.caption(
+        "Critical-path and total-worker runtimes require latency for every planned step. "
+        "Observed metrics are populated by newly recorded runner traces; legacy traces remain blank."
+    )
 
     left, right = st.columns(2)
     difficulties = Counter(str(plan.get("difficulty") or "(missing)") for plan in plans)
@@ -246,6 +500,169 @@ def render_overview(dataset: TraceDataset, error_styles: dict[str, tuple[str, st
         else:
             st.caption("No planned worker calls.")
     st.caption("Model assignments count planned workflow steps, not worker executions.")
+
+    st.markdown("### LLM performance")
+    conductor_rows = [
+        {**row, "role": "conductor", "latency_basis": row.get("latency_basis", "generation batch")}
+        for row in summary.get("conductor_performance", [])
+    ]
+    judge_rows = [
+        {**row, "role": "judge", "latency_basis": row.get("latency_basis", "request")}
+        for row in summary.get("judge_performance", [])
+    ]
+    worker_rows = [
+        {**row, "role": "worker", "latency_basis": "request"}
+        for row in summary["worker_performance"]
+    ]
+    performance_rows = conductor_rows + judge_rows + worker_rows
+    performance = pd.DataFrame(
+        [
+            {
+                "LLM": row["model_id"],
+                "Role": row["role"],
+                "Runs": row["runs"],
+                "Latency basis": row["latency_basis"],
+                "Mean latency (s)": (
+                    row["mean_latency_ms"] / 1000 if row["mean_latency_ms"] is not None else None
+                ),
+                "P95 latency (s)": (
+                    row["p95_latency_ms"] / 1000 if row["p95_latency_ms"] is not None else None
+                ),
+                "Mean prompt tokens": row["mean_prompt_tokens"],
+                "Mean output tokens": row["mean_completion_tokens"],
+                "Mean total tokens": row["mean_total_tokens"],
+                "Output tokens/s": row["mean_output_tokens_per_second"],
+            }
+            for row in performance_rows
+        ]
+    )
+    if performance.empty:
+        st.caption("No conductor or worker performance data is available.")
+    else:
+        st.dataframe(
+            performance,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Runs": st.column_config.NumberColumn(format="%d"),
+                "Mean latency (s)": st.column_config.NumberColumn(format="%.2f"),
+                "P95 latency (s)": st.column_config.NumberColumn(format="%.2f"),
+                "Mean prompt tokens": st.column_config.NumberColumn(format="%.1f"),
+                "Mean output tokens": st.column_config.NumberColumn(format="%.1f"),
+                "Mean total tokens": st.column_config.NumberColumn(format="%.1f"),
+                "Output tokens/s": st.column_config.NumberColumn(format="%.1f"),
+            },
+        )
+        st.caption(
+            "Worker throughput is the mean per-request completion-token rate. Conductor throughput is "
+            "the mean batched generation rate and its latency is measured once per generation batch. "
+            "Judge throughput is measured per successful request."
+        )
+    availability_notes = []
+    if not any(row.get("mean_output_tokens_per_second") is not None for row in conductor_rows):
+        availability_notes.append(
+            "Conductor tok/s is not available for this trace because conductor generation latency was not recorded."
+        )
+    if not judge_rows:
+        availability_notes.append(
+            "Kimi K2.6 judging performance is not available for this trace."
+        )
+    elif not any(row.get("mean_output_tokens_per_second") is not None for row in judge_rows):
+        availability_notes.append(
+            "Kimi K2.6 judge tok/s is not available because token usage or request latency was not recorded."
+        )
+    if availability_notes:
+        st.info(" ".join(availability_notes))
+
+    st.subheader("Runtime bottlenecks")
+    timing = summary.get("worker_timing")
+    if not timing:
+        st.caption("No worker latency data is available.")
+    else:
+        interval_share = timing.get("workflow_interval_share")
+        headline = st.columns(4)
+        metrics = (
+            (
+                f"{float(timing['estimated_workflow_latency_ms']) / 3_600_000:.2f} h",
+                "Estimated workflow time",
+            ),
+            (
+                f"{float(interval_share):.1%}" if interval_share is not None else "—",
+                "Share of observed batch time",
+            ),
+            (
+                f"{float(timing['total_call_latency_ms']) / 3_600_000:.2f} h",
+                "Total worker call-seconds",
+            ),
+            (
+                f"{float(timing['parallelism_savings_ms']) / 3_600_000:.2f} h",
+                "In-workflow parallelism saved",
+            ),
+        )
+        for column, (value, label) in zip(headline, metrics, strict=True):
+            column.metric(label, value)
+
+        model_timing = pd.DataFrame(
+            [
+                {
+                    "Worker LLM": row["model_id"],
+                    "Critical-path hours": row["critical_path_latency_ms"] / 3_600_000,
+                    "Critical-path share": row["critical_path_share"],
+                    "Total call hours": row["total_call_latency_ms"] / 3_600_000,
+                    "Calls": row["calls"],
+                    "Bottleneck layers": row["bottleneck_layers"],
+                }
+                for row in timing["models"]
+            ]
+        )
+        if not model_timing.empty:
+            bars = (
+                alt.Chart(model_timing)
+                .mark_bar(cornerRadiusEnd=4)
+                .encode(
+                    x=alt.X("Critical-path hours:Q", title="Estimated critical-path hours"),
+                    y=alt.Y("Worker LLM:N", title=None, sort="-x"),
+                    color=alt.Color("Worker LLM:N", legend=None),
+                    tooltip=[
+                        "Worker LLM:N",
+                        alt.Tooltip("Critical-path hours:Q", format=".2f"),
+                        alt.Tooltip("Critical-path share:Q", format=".1%"),
+                        alt.Tooltip("Calls:Q", format=",d"),
+                        alt.Tooltip("Bottleneck layers:Q", format=",d"),
+                    ],
+                )
+                .properties(height=max(120, 42 * len(model_timing)))
+            )
+            table_column, chart_column = st.columns((1.15, 1))
+            with table_column:
+                st.dataframe(
+                    model_timing,
+                    width="stretch",
+                    hide_index=True,
+                    column_config={
+                        "Critical-path hours": st.column_config.NumberColumn(format="%.2f"),
+                        "Critical-path share": st.column_config.ProgressColumn(
+                            format="percent", min_value=0, max_value=1
+                        ),
+                        "Total call hours": st.column_config.NumberColumn(format="%.2f"),
+                        "Calls": st.column_config.NumberColumn(format="%d"),
+                        "Bottleneck layers": st.column_config.NumberColumn(format="%d"),
+                    },
+                )
+            with chart_column:
+                st.altair_chart(bars, width="stretch")
+        observed = int(timing.get("observed_batch_intervals") or 0)
+        st.caption(
+            "Workflow time is estimated as the slowest call in each concurrent execution layer. "
+            "Total call-seconds sum all requests and can exceed wall time. "
+            + (
+                f"The observed-time share compares this estimate with {observed} intervals between "
+                "successive batch trace writes; the remainder includes conductor generation, judging, "
+                "training, and logging."
+                if observed
+                else "Observed-time share requires timestamps from at least two completed batches."
+            )
+        )
 
     st.subheader("Reward outcomes")
     reward_counts = Counter(float(record.data.get("reward", 0)) for record in records)
@@ -343,6 +760,275 @@ def render_overview(dataset: TraceDataset, error_styles: dict[str, tuple[str, st
             st.altair_chart(batch_chart, width="stretch")
 
 
+def render_memory_telemetry(source_name: str) -> None:
+    source_path = Path(source_name)
+    if not source_path.is_absolute():
+        source_path = ROOT / source_path
+    run_dir = source_path.parent.parent
+    gpu_path = run_dir / "gpu-memory.csv"
+    process_path = next(
+        (
+            candidate
+            for candidate in (
+                run_dir / "gpu-process-memory.csv",
+                run_dir / "gpo-process-memory.csv",
+                run_dir / "grpo-process-memory.csv",
+            )
+            if candidate.is_file()
+        ),
+        None,
+    )
+    if not gpu_path.is_file():
+        return
+
+    st.subheader("GPU memory telemetry")
+    try:
+        gpu, process = load_memory_telemetry(
+            str(gpu_path),
+            str(process_path) if process_path is not None else None,
+            (
+                gpu_path.stat().st_mtime_ns,
+                process_path.stat().st_mtime_ns if process_path is not None else 0,
+            ),
+        )
+    except (OSError, UnicodeError, ValueError, pd.errors.ParserError) as exc:
+        st.warning(f"Could not load memory telemetry: {exc}")
+        return
+    if gpu.empty:
+        st.caption("gpu-memory.csv contains no usable samples.")
+        return
+
+    duration_minutes = float(gpu["elapsed_minutes"].max())
+    headline = st.columns(4)
+    headline[0].metric("Telemetry duration", f"{duration_minutes / 60:.2f} h")
+    headline[1].metric("GPUs observed", f"{gpu['gpu_index'].nunique():,}")
+    headline[2].metric("Peak device memory", f"{gpu['used_gib'].max():.1f} GiB")
+    headline[3].metric(
+        "Peak GPU utilization",
+        f"{gpu['utilization_gpu_percent'].max():.0f}%",
+    )
+    pressure, per_gpu = gpu_pressure_statistics(gpu)
+    if pressure:
+        diagnostic_values = (
+            (
+                f"{float(pressure['active_mean_utilization']):.1f}%",
+                "Active-window mean utilization",
+            ),
+            (
+                f"{float(pressure['p95_utilization']):.1f}%",
+                "P95 GPU utilization",
+            ),
+            (
+                f"{float(pressure['active_busy_share']):.1%}",
+                "Active samples ≥90% utilized",
+            ),
+            (
+                f"{float(pressure['overall_idle_share']):.1%}",
+                "All samples ≤10% utilized",
+            ),
+            (
+                f"{float(pressure['peak_memory_fraction']):.1%}",
+                "Peak memory capacity used",
+            ),
+            (
+                f"{float(pressure['memory_pressure_share']):.1%}",
+                "Samples ≥90% memory",
+            ),
+            (
+                f"{float(pressure['minimum_headroom_gib']):.1f} GiB",
+                "Minimum memory headroom",
+            ),
+            (
+                f"{float(pressure['p95_utilization_spread']):.1f} pp",
+                "P95 cross-GPU utilization spread",
+            ),
+        )
+        for offset in range(0, len(diagnostic_values), 4):
+            columns = st.columns(4)
+            for column, (value, label) in zip(
+                columns,
+                diagnostic_values[offset : offset + 4],
+                strict=True,
+            ):
+                column.metric(label, value)
+        st.info(f"Compute-bound assessment: {pressure['assessment']}")
+        st.caption(
+            "Active windows are timestamps where at least one GPU exceeds 10% utilization. "
+            "This is a telemetry heuristic—not a profiler result; confirming the bottleneck "
+            "requires SM occupancy/kernel timing plus CPU, I/O, and interconnect measurements."
+        )
+
+    gpu_tab, process_tab = st.tabs(
+        ("gpu-memory.csv", process_path.name if process_path is not None else "process memory")
+    )
+    with gpu_tab:
+        memory_data = downsample_peaks(
+            gpu,
+            series_column="gpu",
+            value_column="used_gib",
+        )
+        memory_chart = (
+            alt.Chart(memory_data)
+            .mark_line()
+            .encode(
+                x=alt.X("elapsed_minutes:Q", title="Elapsed time (minutes)"),
+                y=alt.Y("used_gib:Q", title="Memory used (GiB)", scale=alt.Scale(zero=True)),
+                color=alt.Color("gpu:N", title="Device"),
+                tooltip=[
+                    alt.Tooltip("timestamp:T", title="Time"),
+                    alt.Tooltip("gpu:N", title="Device"),
+                    alt.Tooltip("used_gib:Q", title="Used GiB", format=".2f"),
+                    alt.Tooltip("total_gib:Q", title="Total GiB", format=".2f"),
+                ],
+            )
+            .properties(height=350, title="Device memory usage")
+            .interactive(bind_y=False)
+        )
+        st.altair_chart(memory_chart, width="stretch")
+
+        utilization_data = downsample_peaks(
+            gpu,
+            series_column="gpu",
+            value_column="utilization_gpu_percent",
+        )
+        utilization_chart = (
+            alt.Chart(utilization_data)
+            .mark_line()
+            .encode(
+                x=alt.X("elapsed_minutes:Q", title="Elapsed time (minutes)"),
+                y=alt.Y(
+                    "utilization_gpu_percent:Q",
+                    title="GPU utilization (%)",
+                    scale=alt.Scale(domain=[0, 110]),
+                ),
+                color=alt.Color("gpu:N", title="Device"),
+                tooltip=[
+                    alt.Tooltip("timestamp:T", title="Time"),
+                    alt.Tooltip("gpu:N", title="Device"),
+                    alt.Tooltip(
+                        "utilization_gpu_percent:Q",
+                        title="Utilization",
+                        format=".0f",
+                    ),
+                ],
+            )
+            .properties(height=260, title="GPU utilization")
+            .interactive(bind_y=False)
+        )
+        st.altair_chart(utilization_chart, width="stretch")
+        if not per_gpu.empty:
+            per_gpu_display = per_gpu.rename(
+                columns={
+                    "gpu_index": "GPU",
+                    "gpu": "Role",
+                    "mean_utilization": "Mean utilization",
+                    "p95_utilization": "P95 utilization",
+                    "busy_share": "Samples ≥90%",
+                    "idle_share": "Samples ≤10%",
+                    "peak_used_gib": "Peak GiB",
+                    "capacity_gib": "Capacity GiB",
+                    "peak_memory_fraction": "Peak memory share",
+                }
+            )
+            st.dataframe(
+                per_gpu_display,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "GPU": st.column_config.NumberColumn(format="%d"),
+                    "Mean utilization": st.column_config.NumberColumn(format="%.1f%%"),
+                    "P95 utilization": st.column_config.NumberColumn(format="%.1f%%"),
+                    "Samples ≥90%": st.column_config.ProgressColumn(
+                        format="percent",
+                        min_value=0,
+                        max_value=1,
+                    ),
+                    "Samples ≤10%": st.column_config.ProgressColumn(
+                        format="percent",
+                        min_value=0,
+                        max_value=1,
+                    ),
+                    "Peak GiB": st.column_config.NumberColumn(format="%.2f"),
+                    "Capacity GiB": st.column_config.NumberColumn(format="%.2f"),
+                    "Peak memory share": st.column_config.ProgressColumn(
+                        format="percent",
+                        min_value=0,
+                        max_value=1,
+                    ),
+                },
+            )
+        st.caption(
+            f"{len(gpu):,} samples loaded from {gpu_path.name}; charts retain peak samples "
+            "when downsampling long runs."
+        )
+
+    with process_tab:
+        if process_path is None:
+            st.info(
+                "Per-process memory telemetry is not available for this run. Expected "
+                "gpu-process-memory.csv (also accepts gpo-process-memory.csv)."
+            )
+        elif process.empty:
+            st.caption(f"{process_path.name} contains no usable samples.")
+        else:
+            process_data = downsample_peaks(
+                process,
+                series_column="process",
+                value_column="used_gib",
+            )
+            process_chart = (
+                alt.Chart(process_data)
+                .mark_line()
+                .encode(
+                    x=alt.X("elapsed_minutes:Q", title="Elapsed time (minutes)"),
+                    y=alt.Y(
+                        "used_gib:Q",
+                        title="Process GPU memory (GiB)",
+                        scale=alt.Scale(zero=True),
+                    ),
+                    color=alt.Color("process:N", title="GPU process"),
+                    tooltip=[
+                        alt.Tooltip("timestamp:T", title="Time"),
+                        alt.Tooltip("process:N", title="Process"),
+                        alt.Tooltip("used_gib:Q", title="Used GiB", format=".2f"),
+                    ],
+                )
+                .properties(height=410, title="Per-process GPU memory")
+                .interactive(bind_y=False)
+            )
+            st.altair_chart(process_chart, width="stretch")
+            peaks = (
+                process.groupby(
+                    ["gpu_index", "pid", "process_name"],
+                    as_index=False,
+                )["used_gib"]
+                .max()
+                .rename(
+                    columns={
+                        "gpu_index": "GPU",
+                        "pid": "PID",
+                        "process_name": "Process",
+                        "used_gib": "Peak GiB",
+                    }
+                )
+                .sort_values("Peak GiB", ascending=False)
+            )
+            st.dataframe(
+                peaks,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "GPU": st.column_config.NumberColumn(format="%d"),
+                    "PID": st.column_config.NumberColumn(format="%d"),
+                    "Peak GiB": st.column_config.NumberColumn(format="%.2f"),
+                },
+            )
+            st.caption(
+                f"{len(process):,} samples loaded from {process_path.name}; UUIDs are mapped "
+                "to GPU indices using gpu-memory.csv."
+            )
+
+
 def render_plan(plan: Any) -> None:
     if not isinstance(plan, dict):
         st.code("No parsed plan is available for this record.")
@@ -352,6 +1038,10 @@ def render_plan(plan: Any) -> None:
         f'Task type: {plan.get("task_type", "")} · Difficulty: {plan.get("difficulty", "")} '
         f'· {len(workflow)} step(s)'
     )
+    dot = workflow_to_graphviz(plan)
+    st.graphviz_chart(dot, width="stretch")
+    with st.expander("Graphviz DOT source"):
+        st.code(dot, language="dot")
     for index, step in enumerate(workflow, 1):
         st.markdown(f'**{index}. {step.get("step_id", "")}** · `{step.get("model_id", "")}`')
         st.write(step.get("instruction", ""))
@@ -436,6 +1126,7 @@ def render_trace_analysis_page() -> None:
 
     error_styles = error_style_map(dataset.records)
     render_overview(dataset, error_styles)
+    render_memory_telemetry(source_name)
 
     st.subheader("Trace records")
     reward_values = sorted({float(record.data.get("reward", 0)) for record in dataset.records})
@@ -521,12 +1212,11 @@ def render_megascience_page() -> None:
     extraction_failures = sum(
         record.get("error") is None and record.get("extracted_answer") is None for record in records
     )
-    question_outcomes: dict[str, list[bool]] = {}
-    for record in records:
-        question_id = str(record.get("question_sha256") or record.get("example_id") or record.get("question"))
-        question_outcomes.setdefault(question_id, []).append(bool(record.get("correct")))
-    oracle_correct = sum(any(outcomes) for outcomes in question_outcomes.values())
-    oracle_accuracy = oracle_correct / len(question_outcomes) if question_outcomes else None
+    oracle = oracle_routing_breakdown(records)
+    oracle_correct = oracle["solved_questions"]
+    oracle_accuracy = (
+        oracle_correct / oracle["questions"] if oracle["questions"] else None
+    )
 
     headline = st.columns(6)
     for column, (value, label) in zip(
@@ -622,6 +1312,56 @@ def render_megascience_page() -> None:
                     .properties(height=170),
                     width="stretch",
                 )
+
+    st.subheader("Oracle model choices")
+    oracle_rows = pd.DataFrame(
+        [
+            {
+                "Model": row["display_name"],
+                "Oracle selection credit": row["oracle_selection_credit"],
+                "Share": row["oracle_selection_share"],
+            }
+            for row in oracle["models"]
+        ]
+    )
+    if oracle_rows.empty:
+        st.caption("No question was answered correctly by any model.")
+    else:
+        table_column, chart_column = st.columns((1, 1))
+        with table_column:
+            st.dataframe(
+                oracle_rows,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Oracle selection credit": st.column_config.NumberColumn(format="%.2f"),
+                    "Share": st.column_config.ProgressColumn(
+                        format="percent", min_value=0, max_value=1
+                    ),
+                },
+            )
+        with chart_column:
+            st.altair_chart(
+                alt.Chart(oracle_rows)
+                .mark_arc(innerRadius=42)
+                .encode(
+                    theta=alt.Theta("Oracle selection credit:Q"),
+                    color=alt.Color("Model:N", title=None),
+                    tooltip=[
+                        "Model:N",
+                        alt.Tooltip("Oracle selection credit:Q", format=".2f"),
+                        alt.Tooltip("Share:Q", format=".1%"),
+                    ],
+                )
+                .properties(height=230),
+                width="stretch",
+            )
+        st.caption(
+            f'Based on {oracle["solved_questions"]:,} oracle-solvable questions. '
+            f'When multiple models are correct, the question is split evenly between them '
+            f'({oracle["tied_questions"]:,} tied questions).'
+        )
+
     if correct == 0 and records:
         st.warning(
             "The saved evaluator marked every answer incorrect. Use the answer browser below to compare extracted and reference answers; correctness reflects the stored benchmark labels."
