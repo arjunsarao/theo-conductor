@@ -108,8 +108,16 @@ sbatch scripts/format_only_grpo.sbatch
 
 This job requests two GPUs for conductor training. The worker registry is still
 used to build the prompt and validate generated `model_id` values. To execute
-worker workflows during rewards, use `scripts/small_local_model_grpo.sbatch`
-or pass `--execute-workflows` to `python -m theo_conductor.train`.
+worker workflows during rewards, use the unified launcher:
+
+```bash
+RUN_MODE=train MODEL_CONFIG=configs/local_small_models.yaml \
+  sbatch scripts/worker_pool.sbatch
+```
+
+The launcher supports local, remote, and mixed worker pools. It downloads,
+starts, and stops only models marked `deployment.mode: local`; remote workers
+are readiness-checked without being managed by the job.
 The trainable conductor comes from the selected YAML file's top-level
 `conductor_model` field (`Qwen/Qwen2.5-7B` for the small-local config and
 `Qwen/Qwen3.5-27B` for the large-local config). Training updates LoRA adapters
@@ -138,7 +146,8 @@ call on the same deterministic 200-row MegaScience validation subset used by
 training:
 
 ```bash
-sbatch --export=ALL,BENCHMARK_MEGASCIENCE=1 scripts/slurm_local_small_models.sbatch
+RUN_MODE=benchmark MODEL_CONFIG=configs/local_small_models.yaml \
+  sbatch scripts/worker_pool.sbatch
 ```
 
 The job starts all three vLLM endpoints, verifies them, and writes resumable
@@ -173,6 +182,31 @@ uv run theo-benchmark
 Use `--max-samples 5` for a smoke run. Dataset identity is controlled by
 `--seed`, `--total-samples`, and `--validation-samples`; their defaults (42,
 2000, and 200) intentionally match conductor training.
+
+## Worker-pool launcher
+
+`scripts/worker_pool.sbatch` is the single SLURM entry point for configured
+worker pools:
+
+```bash
+# Start local workers, verify all local/remote endpoints, then exit.
+RUN_MODE=smoke sbatch scripts/worker_pool.sbatch
+
+# Benchmark a mixed large-model pool.
+RUN_MODE=benchmark MODEL_CONFIG=configs/local_large_models.yaml \
+  sbatch scripts/worker_pool.sbatch
+
+# Train with executed worker workflows.
+RUN_MODE=train MODEL_CONFIG=configs/local_large_models.yaml \
+  sbatch scripts/worker_pool.sbatch
+```
+
+Local deployment settings live beside each model's client configuration:
+`source_model`, `gpu_set`, `tensor_parallel_size`, `max_model_len`, and
+optional `gpu_memory_utilization`. Remote entries need only
+`deployment.mode: remote`. `TRAIN_GPUS` selects conductor devices (default
+`6,7`), while `VLLM_EXTRA_ARGS` appends flags to every locally managed vLLM
+server.
 
 # TODO
 

@@ -91,6 +91,8 @@ class ModelRegistry:
 
         raw = dict(data)
         client_config = raw.pop("client", None)
+        # Launcher-only metadata; ModelSpec describes inference capabilities.
+        raw.pop("deployment", None)
         if client_config is None:
             raise ValueError(f"Model entry in {source} is missing required 'client' config")
 

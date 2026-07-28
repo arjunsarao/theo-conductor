@@ -12,7 +12,6 @@ set -Eeuo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG="${MODEL_CONFIG:-${REPO_ROOT}/configs/local_small_models.yaml}"
 MODEL_ROOT="${THEO_MODEL_ROOT:-/mnt/data/home/arjun/.cache/theo-conductor/models}"
-CONDUCTOR_MODEL="${CONDUCTOR_MODEL:-Qwen/Qwen2.5-7B}"
 INCLUDE_CONDUCTOR="${INCLUDE_CONDUCTOR:-1}"
 
 if [[ -n "${VLLM_ENV:-}" ]]; then
@@ -39,10 +38,24 @@ import yaml
 config = sys.argv[1]
 with open(config, encoding="utf-8") as handle:
     data = yaml.safe_load(handle)
-models = [item["client"]["model"] for item in data["models"]]
+models = [
+    item["deployment"].get("source_model", item["client"]["model"])
+    for item in data["models"]
+    if item.get("deployment", {}).get("mode") == "local"
+]
 print("\n".join(dict.fromkeys(models)))
 PY
 )
+
+CONDUCTOR_MODEL="${CONDUCTOR_MODEL:-$(python - "$CONFIG" <<'PY'
+import sys
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    data = yaml.safe_load(handle) or {}
+print(data.get("conductor_model", ""))
+PY
+)}"
 
 download() {
   local repo_id=$1
@@ -64,6 +77,10 @@ for model in "${MODELS[@]}"; do
 done
 
 if [[ "$INCLUDE_CONDUCTOR" == "1" ]]; then
+  [[ -n "$CONDUCTOR_MODEL" ]] || {
+    echo "Config has no conductor_model; set CONDUCTOR_MODEL or use INCLUDE_CONDUCTOR=0" >&2
+    exit 2
+  }
   # The trainer loads this model by repository ID rather than LOCAL_MODEL_ROOT,
   # so warm the shared Hugging Face cache instead of making a second full copy.
   echo "Downloading conductor cache: $CONDUCTOR_MODEL"
@@ -71,4 +88,4 @@ if [[ "$INCLUDE_CONDUCTOR" == "1" ]]; then
 fi
 
 echo "Persistent model root ready: $MODEL_ROOT"
-echo "Use this same path explicitly if needed: THEO_MODEL_ROOT=$MODEL_ROOT sbatch scripts/small_local_model_grpo.sbatch"
+echo "Use this same path explicitly if needed: THEO_MODEL_ROOT=$MODEL_ROOT sbatch scripts/worker_pool.sbatch"

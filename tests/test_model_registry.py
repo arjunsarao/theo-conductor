@@ -52,6 +52,30 @@ models:
     assert registry.conductor_model == "Qwen/Qwen3.5-27B"
 
 
+def test_model_registry_ignores_launcher_deployment_metadata(tmp_path):
+    config_file = tmp_path / "models.yaml"
+    config_file.write_text(
+        """
+models:
+  - model_idx: worker
+    client:
+      base_url: http://localhost:8001/v1
+      model: served-model
+    deployment:
+      mode: local
+      source_model: source/model
+      gpu_set: "0,1"
+      tensor_parallel_size: 2
+      max_model_len: 32768
+""",
+    )
+
+    registry = ModelRegistry.from_yaml_file(config_file)
+
+    assert registry.model_ids() == ["worker"]
+    assert registry.get("worker").client.model == "served-model"
+
+
 def test_model_registry_loads_all_yaml_files_from_config_dir(tmp_path):
     (tmp_path / "first.yaml").write_text(
         """

@@ -5,11 +5,11 @@ models:
     provider: vllm
     display_name: Kimi K2.6
     name: kimi-k2.6
-    context_length: 1000000
+    context_length: 262144
     supports_tools: false
     supports_json: true
     tags:
-      - local
+      - remote
       - large
       - reasoning
       - coding
@@ -17,29 +17,35 @@ models:
       type: openai_compatible
       base_url: http://10.100.50.35:30080/v1
       model: moonshotai/Kimi-K2.6
+      api_key: change-this
+    deployment:
+      mode: remote
 
-  - model_idx: glm-5.2
+  - model_idx: glm-5.2-fp8
     provider: vllm
     display_name: GLM 5.2
-    name: glm-5.2
-    context_length: 1000000
+    name: glm-5.2-fp8
+    context_length: 262144
     supports_tools: false
     supports_json: true
     tags:
-      - local
+      - remote
       - large
       - coding
       - agentic
     client:
       type: openai_compatible
-      base_url: http://localhost:8005/v1
-      model: zai-org/GLM-5.2
+      base_url: http://10.100.50.35:30080/v1
+      model: glm-5.2-fp8
+      api_key: change-this
+    deployment:
+      mode: remote
 
   - model_idx: deepseek-v4-flash
     provider: vllm
     display_name: DeepSeek V4 Flash
     name: deepseek-v4-flash
-    context_length: 1000000
+    context_length: 131072
     supports_tools: false
     supports_json: true
     tags:
@@ -51,3 +57,9 @@ models:
       type: openai_compatible
       base_url: http://localhost:8006/v1
       model: deepseek-ai/DeepSeek-V4-Flash
+    deployment:
+      mode: local
+      source_model: deepseek-ai/DeepSeek-V4-Flash
+      gpu_set: "0,1,2,3,4,5"
+      tensor_parallel_size: 6
+      max_model_len: 131072
