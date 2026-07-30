@@ -111,13 +111,28 @@ used to build the prompt and validate generated `model_id` values. To execute
 worker workflows during rewards, use the unified launcher:
 
 ```bash
-RUN_MODE=train MODEL_CONFIG=configs/local_small_models.yaml \
+RUN_MODE=train MODEL_CONFIG=configs/worker_pool_small.yaml \
   sbatch scripts/worker_pool.sbatch
 ```
 
 The launcher supports local, remote, and mixed worker pools. It downloads,
 starts, and stops only models marked `deployment.mode: local`; remote workers
 are readiness-checked without being managed by the job.
+
+Training and its held-out evaluation split use MegaScience by default. Select
+`megascience`, `hle`, `gpqa`, or the combined `hle-gpqa` dataset with
+`DATASET`:
+
+```bash
+DATASET=hle-gpqa MODEL_CONFIG=configs/worker_pool_large.yaml RUN_MODE=train \
+  sbatch scripts/worker_pool.sbatch
+```
+
+`DATASET_SAMPLES` optionally caps a seeded subset before splitting, and
+`VALIDATION_SAMPLES` controls the held-out row count (default `200`). The
+equivalent direct CLI options are `--dataset`, `--dataset-samples`, and
+`--validation-samples`.
+
 The trainable conductor comes from the selected YAML file's top-level
 `conductor_model` field (`Qwen/Qwen2.5-7B` for the small-local config and
 `Qwen/Qwen3.5-27B` for the large-local config). Training updates LoRA adapters
@@ -141,18 +156,18 @@ attempts recorded in training traces.
 
 ## Small-model MegaScience benchmark
 
-Benchmark every model in `configs/local_small_models.yaml` with one independent
+Benchmark every model in `configs/worker_pool_small.yaml` with one independent
 call on the same deterministic 200-row MegaScience validation subset used by
 training:
 
 ```bash
-RUN_MODE=benchmark MODEL_CONFIG=configs/local_small_models.yaml \
+RUN_MODE=benchmark MODEL_CONFIG=configs/worker_pool_small.yaml \
   sbatch scripts/worker_pool.sbatch
 ```
 
 The job starts all three vLLM endpoints, verifies them, and writes resumable
-per-question records to `outputs/megascience-small-models/results.jsonl` and
-aggregate metrics to `outputs/megascience-small-models/summary.json`. Metrics
+per-question records to `outputs/megascience-worker-pool/results.jsonl` and
+aggregate metrics to `outputs/megascience-worker-pool/summary.json`. Metrics
 include accuracy with a bootstrap 95% confidence interval, accuracy by subject,
 token usage, latency, request failures, and missing-`FINAL:` extraction failures.
 Re-running the command resumes completed model/question pairs.
@@ -180,8 +195,7 @@ uv run theo-benchmark
 ```
 
 Use `--max-samples 5` for a smoke run. Dataset identity is controlled by
-`--seed`, `--total-samples`, and `--validation-samples`; their defaults (42,
-2000, and 200) intentionally match conductor training.
+`--dataset`, `--seed`, `--total-samples`, and `--validation-samples`.
 
 ## Worker-pool launcher
 
@@ -193,11 +207,12 @@ worker pools:
 RUN_MODE=smoke sbatch scripts/worker_pool.sbatch
 
 # Benchmark a mixed large-model pool.
-RUN_MODE=benchmark MODEL_CONFIG=configs/local_large_models.yaml \
+RUN_MODE=benchmark DATASET=hle-gpqa \
+  MODEL_CONFIG=configs/worker_pool_large.yaml \
   sbatch scripts/worker_pool.sbatch
 
 # Train with executed worker workflows.
-RUN_MODE=train MODEL_CONFIG=configs/local_large_models.yaml \
+RUN_MODE=train MODEL_CONFIG=configs/worker_pool_large.yaml \
   sbatch scripts/worker_pool.sbatch
 ```
 
@@ -207,6 +222,11 @@ optional `gpu_memory_utilization`. Remote entries need only
 `deployment.mode: remote`. `TRAIN_GPUS` selects conductor devices (default
 `6,7`), while `VLLM_EXTRA_ARGS` appends flags to every locally managed vLLM
 server.
+
+Benchmark mode uses the same `DATASET` and `VALIDATION_SAMPLES` settings.
+`BENCHMARK_TOTAL_SAMPLES` and `BENCHMARK_VALIDATION_SAMPLES` provide
+benchmark-specific overrides. Its default output directory is
+`outputs/<dataset>-worker-pool`.
 
 # TODO
 

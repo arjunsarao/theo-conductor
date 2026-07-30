@@ -15,7 +15,7 @@ from transformers import AutoProcessor, AutoTokenizer
 from trl.trainer.grpo_config import GRPOConfig
 
 from theo_conductor.benchmark import DEFAULT_JUDGE_BASE_URL, DEFAULT_JUDGE_MODEL
-from theo_conductor.data import build_megascience_splits, build_training_dataset
+from theo_conductor.data import TRAINING_DATASETS, build_conductor_splits
 from theo_conductor.grpo import (
     INVALID_WORKFLOW_REWARD,
     MALFORMED_REWARD,
@@ -41,7 +41,9 @@ DEFAULT_OUTPUT_DIR = "outputs/grpo-conductor"
 class TrainConfig:
     model_name: str | None = None
     output_dir: str = DEFAULT_OUTPUT_DIR
-    config_path: str = "configs/local_small_models.yaml"
+    config_path: str = "configs/worker_pool_small.yaml"
+    dataset: str = "megascience"
+    dataset_samples: int | None = None
     seed: int = 42
     max_train_samples: int | None = None
     max_steps: int = 200
@@ -269,9 +271,10 @@ def build_trainer(config: TrainConfig):
         os.environ.setdefault("WANDB_PROJECT", config.wandb_project)
     model_registry = ModelRegistry.from_yaml_file(config.config_path)
     conductor_model = resolve_conductor_model(config, model_registry)
-    splits = build_megascience_splits(
+    splits = build_conductor_splits(
+        config.dataset,
         seed=config.seed,
-        total_samples=2_000,
+        total_samples=config.dataset_samples,
         validation_samples=config.validation_samples,
     )
     train_dataset = prepare_grpo_dataset(
@@ -408,16 +411,29 @@ def run_preflight(config: TrainConfig) -> None:
 
     registry = ModelRegistry.from_yaml_file(config.config_path)
     conductor_model = resolve_conductor_model(config, registry)
-    raw_dataset = build_training_dataset(seed=config.seed, max_samples=2_000)
-    if len(raw_dataset) != 2_000:
-        raise RuntimeError(f"MegaScience preflight requires 2,000 rows, but loaded {len(raw_dataset)}.")
-    train_dataset = prepare_grpo_dataset(raw_dataset, registry)
+    splits = build_conductor_splits(
+        config.dataset,
+        seed=config.seed,
+        total_samples=config.dataset_samples,
+        validation_samples=config.validation_samples,
+    )
+    if len(splits["train"]) < 2:
+        raise RuntimeError(
+            f"{config.dataset} preflight requires at least two training rows, "
+            f"but loaded {len(splits['train'])}."
+        )
+    train_dataset = prepare_grpo_dataset(splits["train"], registry)
+    eval_dataset = prepare_grpo_dataset(splits["test"], registry)
     processing_class = load_processing_class(conductor_model)
     context_length = _context_length(processing_class, config.max_context_length)
-    longest_prompt = max(_prompt_token_count(processing_class, row["prompt"]) for row in train_dataset)
+    longest_prompt = max(
+        _prompt_token_count(processing_class, row["prompt"])
+        for dataset in (train_dataset, eval_dataset)
+        for row in dataset
+    )
     if longest_prompt + config.max_completion_length > context_length:
         raise RuntimeError(
-            "MegaScience prompts exceed the selected context window: "
+            f"{config.dataset} prompts exceed the selected context window: "
             f"{longest_prompt} prompt tokens + {config.max_completion_length} completion tokens > {context_length}."
         )
 
@@ -514,7 +530,8 @@ def run_preflight(config: TrainConfig) -> None:
         else "format-only structural reward, "
     )
     print(
-        "Preflight passed: 2,000 MegaScience rows, "
+        f"Preflight passed: {len(train_dataset):,} {config.dataset} training rows and "
+        f"{len(eval_dataset):,} evaluation rows, "
         f"{longest_prompt}/{context_length} prompt+completion token budget, "
         f"parsed conductor workflow, {execution_check}structural reward tiers, and checkpoint."
     )
@@ -527,7 +544,18 @@ def parse_args() -> TrainConfig:
         help="Override the conductor_model declared in --config-path.",
     )
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--config-path", default="configs/local_small_models.yaml")
+    parser.add_argument("--config-path", default="configs/worker_pool_small.yaml")
+    parser.add_argument(
+        "--dataset",
+        choices=TRAINING_DATASETS,
+        default="megascience",
+        help="Dataset used for both deterministic training/evaluation splitting.",
+    )
+    parser.add_argument(
+        "--dataset-samples",
+        type=int,
+        help="Optional seeded cap applied before the train/evaluation split.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-train-samples", type=int)
     parser.add_argument("--max-steps", type=int, default=200)

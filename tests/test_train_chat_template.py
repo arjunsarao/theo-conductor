@@ -234,10 +234,31 @@ def test_worker_execution_is_cli_opt_in(monkeypatch):
 def test_cli_resolves_large_local_conductor_from_config(monkeypatch):
     monkeypatch.setattr(
         "sys.argv",
-        ["train", "--config-path", "configs/local_large_models.yaml"],
+        ["train", "--config-path", "configs/worker_pool_large.yaml"],
     )
 
     assert parse_args().model_name == "Qwen/Qwen3.5-27B"
+
+
+def test_training_dataset_is_selectable_from_cli(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "train",
+            "--dataset",
+            "hle-gpqa",
+            "--dataset-samples",
+            "500",
+            "--validation-samples",
+            "100",
+        ],
+    )
+
+    config = parse_args()
+
+    assert config.dataset == "hle-gpqa"
+    assert config.dataset_samples == 500
+    assert config.validation_samples == 100
 
 
 def test_training_judge_cli_configuration(monkeypatch):

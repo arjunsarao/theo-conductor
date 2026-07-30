@@ -16,7 +16,10 @@
 set -Eeuo pipefail
 
 REPO_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-CONFIG="${MODEL_CONFIG:-${REPO_ROOT}/configs/local_small_models.yaml}"
+CONFIG="${MODEL_CONFIG:-${REPO_ROOT}/configs/worker_pool_small.yaml}"
+DATASET="${DATASET:-megascience}"
+DATASET_SAMPLES="${DATASET_SAMPLES:-}"
+VALIDATION_SAMPLES="${VALIDATION_SAMPLES:-200}"
 TRAIN_GPUS="${TRAIN_GPUS:-0,1}"
 TRAIN_OUTPUT_DIR="${TRAIN_OUTPUT_DIR:-${REPO_ROOT}/outputs/grpo-${SLURM_JOB_ID:-manual}}"
 WANDB_PROJECT="${WANDB_PROJECT:-theo-conductor}"
@@ -58,6 +61,8 @@ fi
 
 echo "Starting format-only GRPO on GPU(s) ${TRAIN_GPUS}; worker execution is disabled"
 train_extra=(--use-vllm --wandb-project "$WANDB_PROJECT")
+train_extra+=(--dataset "$DATASET" --validation-samples "$VALIDATION_SAMPLES")
+[[ -n "$DATASET_SAMPLES" ]] && train_extra+=(--dataset-samples "$DATASET_SAMPLES")
 # shellcheck disable=SC2206
 train_extra+=( $TRAIN_EXTRA_ARGS )
 CUDA_VISIBLE_DEVICES="$TRAIN_GPUS" \

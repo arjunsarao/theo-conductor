@@ -17,14 +17,17 @@
 # Examples:
 #   RUN_MODE=smoke sbatch scripts/worker_pool.sbatch
 #   RUN_MODE=benchmark sbatch scripts/worker_pool.sbatch
-#   MODEL_CONFIG=configs/local_large_models.yaml RUN_MODE=train \
+#   MODEL_CONFIG=configs/worker_pool_large.yaml RUN_MODE=train \
 #     sbatch scripts/worker_pool.sbatch
 
 set -Eeuo pipefail
 
 REPO_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-CONFIG="${MODEL_CONFIG:-${REPO_ROOT}/configs/local_small_models.yaml}"
+CONFIG="${MODEL_CONFIG:-${REPO_ROOT}/configs/worker_pool_small.yaml}"
 RUN_MODE="${RUN_MODE:-smoke}"
+DATASET="${DATASET:-megascience}"
+DATASET_SAMPLES="${DATASET_SAMPLES:-}"
+VALIDATION_SAMPLES="${VALIDATION_SAMPLES:-200}"
 LOCAL_ROOT="${LOCAL_MODEL_ROOT:-${THEO_MODEL_ROOT:-/mnt/data/home/arjun/.cache/theo-conductor/models}}"
 LOG_ROOT="${LOCAL_ROOT}/logs"
 READY_TIMEOUT="${READY_TIMEOUT:-1800}"
@@ -35,7 +38,7 @@ KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-}"
 KILL_EXISTING_PORTS="${KILL_EXISTING_PORTS:-0}"
 TRAIN_GPUS="${TRAIN_GPUS:-6,7}"
 TRAIN_OUTPUT_DIR="${TRAIN_OUTPUT_DIR:-${REPO_ROOT}/outputs/grpo-${SLURM_JOB_ID:-manual}}"
-BENCHMARK_OUTPUT_DIR="${BENCHMARK_OUTPUT_DIR:-${REPO_ROOT}/outputs/megascience-worker-pool}"
+BENCHMARK_OUTPUT_DIR="${BENCHMARK_OUTPUT_DIR:-${REPO_ROOT}/outputs/${DATASET}-worker-pool}"
 WANDB_PROJECT="${WANDB_PROJECT:-theo-conductor}"
 TRAIN_EXTRA_ARGS="${TRAIN_EXTRA_ARGS:-}"
 GPU_MEMORY_LOG_INTERVAL="${GPU_MEMORY_LOG_INTERVAL:-5}"
@@ -348,13 +351,15 @@ if [[ "$RUN_MODE" == "benchmark" ]]; then
   benchmark_args=(
     --config "$CONFIG"
     --output-dir "$BENCHMARK_OUTPUT_DIR"
+    --dataset "$DATASET"
     --seed "${BENCHMARK_SEED:-42}"
-    --total-samples "${BENCHMARK_TOTAL_SAMPLES:-2000}"
-    --validation-samples "${BENCHMARK_VALIDATION_SAMPLES:-200}"
+    --validation-samples "${BENCHMARK_VALIDATION_SAMPLES:-$VALIDATION_SAMPLES}"
     --max-tokens "${BENCHMARK_MAX_TOKENS:-4096}"
     --temperature "${BENCHMARK_TEMPERATURE:-0.0}"
     --concurrency "${BENCHMARK_CONCURRENCY:-4}"
   )
+  benchmark_total_samples="${BENCHMARK_TOTAL_SAMPLES:-$DATASET_SAMPLES}"
+  [[ -n "$benchmark_total_samples" ]] && benchmark_args+=(--total-samples "$benchmark_total_samples")
   [[ -n "${BENCHMARK_MAX_SAMPLES:-}" ]] && benchmark_args+=(--max-samples "$BENCHMARK_MAX_SAMPLES")
   PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
     python -m theo_conductor.benchmark "${benchmark_args[@]}"
@@ -370,6 +375,8 @@ fi
 
 echo "Starting executed-workflow GRPO on GPU(s) $TRAIN_GPUS"
 train_extra=(--use-vllm --execute-workflows --wandb-project "$WANDB_PROJECT")
+train_extra+=(--dataset "$DATASET" --validation-samples "$VALIDATION_SAMPLES")
+[[ -n "$DATASET_SAMPLES" ]] && train_extra+=(--dataset-samples "$DATASET_SAMPLES")
 # shellcheck disable=SC2206
 train_extra+=( $TRAIN_EXTRA_ARGS )
 CUDA_VISIBLE_DEVICES="$TRAIN_GPUS" \

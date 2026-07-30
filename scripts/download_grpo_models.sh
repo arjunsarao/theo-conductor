@@ -10,7 +10,7 @@
 set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONFIG="${MODEL_CONFIG:-${REPO_ROOT}/configs/local_small_models.yaml}"
+CONFIG="${MODEL_CONFIG:-${REPO_ROOT}/configs/worker_pool_small.yaml}"
 MODEL_ROOT="${THEO_MODEL_ROOT:-/mnt/data/home/arjun/.cache/theo-conductor/models}"
 INCLUDE_CONDUCTOR="${INCLUDE_CONDUCTOR:-1}"
 

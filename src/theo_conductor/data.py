@@ -1,7 +1,7 @@
 import os
 import random
 
-from datasets import Dataset, DatasetDict, load_dataset
+from datasets import Dataset, DatasetDict, concatenate_datasets, load_dataset
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,6 +16,7 @@ PHYSICS_ADJACENT_DOMAINS = {
 
 MEGASCIENCE_DATASET_ID = "MegaScience/MegaScience"
 DEFAULT_MEGASCIENCE_SAMPLES = 2_000
+TRAINING_DATASETS = ("megascience", "hle", "gpqa", "hle-gpqa")
 
 
 def format_mcq_batch(examples, seed=42):
@@ -62,8 +63,15 @@ def is_physics_adjacent_domain(value: str | None) -> bool:
 
 def load_hle_physics_dataset():
     hle = load_dataset("cais/hle", split="test", token=os.getenv("HF_TOKEN"))
-    return hle.filter(lambda ex: is_physics_adjacent_domain(ex.get("category"))).select_columns(
-        ["id", "question", "answer", "answer_type", "rationale"]
+    return hle.filter(lambda ex: is_physics_adjacent_domain(ex.get("category"))).map(
+        lambda ex: {
+            "id": f"hle-{ex['id']}",
+            "reference_answer": ex.get("rationale"),
+            "subject": ex.get("category"),
+        },
+        remove_columns=["category", "rationale"],
+    ).select_columns(
+        ["id", "question", "answer", "answer_type", "reference_answer", "subject"]
     )
 
 
@@ -80,9 +88,16 @@ def load_gpqa_physics_dataset(seed=42):
                 "Incorrect Answer 3",
                 "Explanation",
                 "Record ID",
+                "High-level domain",
             ]
         )
-        .rename_columns({"Explanation": "rationale", "Record ID": "id"})
+        .rename_columns(
+            {
+                "Explanation": "reference_answer",
+                "Record ID": "id",
+                "High-level domain": "subject",
+            }
+        )
     )
 
     gpqa_physics = gpqa_physics.map(
@@ -98,7 +113,9 @@ def load_gpqa_physics_dataset(seed=42):
         fn_kwargs={"seed": seed},
     ).add_column("answer_type", ["multipleChoice"] * len(gpqa_physics))
 
-    return gpqa_physics
+    return gpqa_physics.map(lambda ex: {"id": f"gpqa-{ex['id']}"}).select_columns(
+        ["id", "question", "answer", "answer_type", "reference_answer", "subject"]
+    )
 
 
 def load_megascience_dataset(
@@ -150,4 +167,54 @@ def build_megascience_splits(
         raise ValueError("validation_samples must be between 1 and total_samples - 1")
 
     dataset = load_megascience_dataset(seed=seed, max_samples=total_samples)
+    return dataset.train_test_split(test_size=validation_samples, seed=seed, shuffle=True)
+
+
+def load_conductor_dataset(
+    dataset_name: str,
+    *,
+    seed: int = 42,
+    max_samples: int | None = None,
+) -> Dataset:
+    """Load a normalized dataset used by conductor training and evaluation."""
+    if dataset_name not in TRAINING_DATASETS:
+        raise ValueError(
+            f"Unknown dataset {dataset_name!r}; choose one of: {', '.join(TRAINING_DATASETS)}"
+        )
+    if max_samples is not None and max_samples < 0:
+        raise ValueError("max_samples must be non-negative or None")
+
+    if dataset_name == "megascience":
+        # Preserve the established 2,000-row default for existing runs.
+        limit = DEFAULT_MEGASCIENCE_SAMPLES if max_samples is None else max_samples
+        return load_megascience_dataset(seed=seed, max_samples=limit)
+    if dataset_name == "hle":
+        dataset = load_hle_physics_dataset()
+    elif dataset_name == "gpqa":
+        dataset = load_gpqa_physics_dataset(seed=seed)
+    else:
+        dataset = concatenate_datasets(
+            [load_hle_physics_dataset(), load_gpqa_physics_dataset(seed=seed)]
+        )
+
+    dataset = dataset.shuffle(seed=seed)
+    if max_samples is not None:
+        dataset = dataset.select(range(min(max_samples, len(dataset))))
+    return dataset
+
+
+def build_conductor_splits(
+    dataset_name: str = "megascience",
+    *,
+    seed: int = 42,
+    total_samples: int | None = None,
+    validation_samples: int = 200,
+) -> DatasetDict:
+    """Return deterministic train/evaluation splits for a selected dataset."""
+    dataset = load_conductor_dataset(dataset_name, seed=seed, max_samples=total_samples)
+    if validation_samples <= 0 or validation_samples >= len(dataset):
+        raise ValueError(
+            f"validation_samples must be between 1 and {len(dataset) - 1} "
+            f"for dataset {dataset_name!r}"
+        )
     return dataset.train_test_split(test_size=validation_samples, seed=seed, shuffle=True)

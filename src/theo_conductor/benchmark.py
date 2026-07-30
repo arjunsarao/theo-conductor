@@ -14,7 +14,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-from .data import DEFAULT_MEGASCIENCE_SAMPLES, build_megascience_splits
+from .data import TRAINING_DATASETS, build_conductor_splits
 from .models.registry import ModelRegistry
 from .models.openai_compat import OpenAICompatibleClient
 
@@ -503,12 +503,17 @@ async def run_benchmark(
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="theo-benchmark",
-        description="Benchmark every configured model on the shared MegaScience validation subset.",
+        description="Benchmark every configured model on a shared deterministic evaluation split.",
     )
-    parser.add_argument("--config", type=Path, default=Path("configs/local_small_models.yaml"))
+    parser.add_argument("--config", type=Path, default=Path("configs/worker_pool_small.yaml"))
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/megascience-small-models"))
+    parser.add_argument("--dataset", choices=TRAINING_DATASETS, default="megascience")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--total-samples", type=int, default=DEFAULT_MEGASCIENCE_SAMPLES)
+    parser.add_argument(
+        "--total-samples",
+        type=int,
+        help="Optional seeded dataset cap before creating the evaluation split.",
+    )
     parser.add_argument("--validation-samples", type=int, default=DEFAULT_VALIDATION_SAMPLES)
     parser.add_argument("--max-samples", type=int, help="Limit validation rows for a smoke run.")
     parser.add_argument("--max-tokens", type=int, default=4096)
@@ -538,7 +543,8 @@ async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
         raise ValueError("max-samples must be non-negative")
 
     registry = ModelRegistry.from_yaml_file(args.config)
-    split = build_megascience_splits(
+    split = build_conductor_splits(
+        args.dataset,
         seed=args.seed,
         total_samples=args.total_samples,
         validation_samples=args.validation_samples,
@@ -586,8 +592,8 @@ async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
             checkpoint_size=args.judge_checkpoint_size,
         )
     summary = {
-        "dataset": "MegaScience/MegaScience",
-        "split": "train-derived deterministic validation subset",
+        "dataset": args.dataset,
+        "split": "deterministic held-out evaluation subset",
         "seed": args.seed,
         "total_subset_samples": args.total_samples,
         "validation_samples": args.validation_samples,
