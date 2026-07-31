@@ -213,15 +213,36 @@ RUN_MODE=benchmark DATASET=hle-gpqa \
 
 # Train with executed worker workflows.
 RUN_MODE=train MODEL_CONFIG=configs/worker_pool_large.yaml \
+  sbatch --gres=gpu:5 scripts/worker_pool.sbatch
+```
+
+The large pool runs DeepSeek V4 Flash with tensor parallelism across GPUs
+`0–3` and places the 27B LoRA conductor on GPU `4`, so training requests five
+H200s in total. A worker-only smoke test or benchmark needs four:
+
+```bash
+RUN_MODE=smoke MODEL_CONFIG=configs/worker_pool_large.yaml \
+  sbatch --gres=gpu:4 scripts/worker_pool.sbatch
+
+RUN_MODE=benchmark MODEL_CONFIG=configs/worker_pool_large.yaml \
+  sbatch --gres=gpu:4 scripts/worker_pool.sbatch
+```
+
+The default `#SBATCH` allocation remains eight GPUs because the small pool
+still uses six worker GPUs plus two training GPUs; the command-line `--gres`
+override selects the smaller large-pool allocation.
+
+```bash
+RUN_MODE=train MODEL_CONFIG=configs/worker_pool_small.yaml \
   sbatch scripts/worker_pool.sbatch
 ```
 
 Local deployment settings live beside each model's client configuration:
 `source_model`, `gpu_set`, `tensor_parallel_size`, `max_model_len`, and
 optional `gpu_memory_utilization`. Remote entries need only
-`deployment.mode: remote`. `TRAIN_GPUS` selects conductor devices (default
-`6,7`), while `VLLM_EXTRA_ARGS` appends flags to every locally managed vLLM
-server.
+`deployment.mode: remote`. Each config's `train_gpu_set` selects conductor
+devices and can be overridden with `TRAIN_GPUS`; `VLLM_EXTRA_ARGS` appends
+flags to every locally managed vLLM server.
 
 Benchmark mode uses the same `DATASET` and `VALIDATION_SAMPLES` settings.
 `BENCHMARK_TOTAL_SAMPLES` and `BENCHMARK_VALIDATION_SAMPLES` provide

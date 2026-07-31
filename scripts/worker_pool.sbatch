@@ -36,7 +36,7 @@ VLLM_EXTRA_ARGS="${VLLM_EXTRA_ARGS:-}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
 KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-}"
 KILL_EXISTING_PORTS="${KILL_EXISTING_PORTS:-0}"
-TRAIN_GPUS="${TRAIN_GPUS:-6,7}"
+TRAIN_GPUS="${TRAIN_GPUS:-}"
 TRAIN_OUTPUT_DIR="${TRAIN_OUTPUT_DIR:-${REPO_ROOT}/outputs/grpo-${SLURM_JOB_ID:-manual}}"
 BENCHMARK_OUTPUT_DIR="${BENCHMARK_OUTPUT_DIR:-${REPO_ROOT}/outputs/${DATASET}-worker-pool}"
 WANDB_PROJECT="${WANDB_PROJECT:-theo-conductor}"
@@ -65,6 +65,19 @@ for command in python curl; do
   command -v "$command" >/dev/null || { echo "Required command not found: $command" >&2; exit 2; }
 done
 [[ -f "$CONFIG" ]] || { echo "Model config not found: $CONFIG" >&2; exit 2; }
+
+if [[ -z "$TRAIN_GPUS" ]]; then
+  TRAIN_GPUS=$(python - "$CONFIG" <<'PY'
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    data = yaml.safe_load(handle) or {}
+print(data.get("train_gpu_set", "6,7"))
+PY
+)
+fi
 
 mkdir -p "$LOCAL_ROOT" "$LOG_ROOT" "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE" "$HF_XET_CACHE"
 
@@ -99,7 +112,7 @@ for index, model in enumerate(models):
     if mode not in {"local", "remote"}:
         raise SystemExit(f"{path}: model {index} deployment.mode must be local or remote")
 
-    base_url = str(client.get("base_url", "")).rstrip("/")
+    base_url = str(client.get("base_ursql", "")).rstrip("/")
     served_name = str(client.get("model", ""))
     parsed = urlparse(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or not served_name:
