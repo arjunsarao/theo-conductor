@@ -166,6 +166,34 @@ def test_reward_traces_include_the_executed_vllm_workflow_result():
     assert trace.run_result is not None
 
 
+def test_workflow_execution_is_bounded_and_concurrent():
+    class ConcurrentClient:
+        def __init__(self):
+            self.active = 0
+            self.max_active = 0
+
+        async def generate(self, **kwargs):
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            await asyncio.sleep(0.01)
+            self.active -= 1
+            return ModelResponse(text="FINAL: A")
+
+    client = ConcurrentClient()
+    registry = ModelRegistry([ModelSpec(model_idx="solver", provider="vllm", client=client)])
+
+    traces = compute_reward_traces(
+        [VALID_COMPLETION] * 5,
+        ground_truth=["A"] * 5,
+        model_registry=registry,
+        execute_workflows=True,
+        workflow_concurrency=2,
+    )
+
+    assert client.max_active == 2
+    assert [trace.reward for trace in traces] == [1.0] * 5
+
+
 def test_build_grpo_trainer_keeps_trace_observer_out_of_trl_kwargs(monkeypatch):
     captured: dict = {}
 

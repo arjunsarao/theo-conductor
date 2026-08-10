@@ -1,5 +1,5 @@
 conductor_model: Qwen/Qwen3.5-27B
-train_gpu_set: "4"
+train_gpu_set: "0"
 
 models:
   - model_idx: kimi-k2.6
@@ -50,17 +50,14 @@ models:
     supports_tools: false
     supports_json: true
     tags:
-      - local
+      - remote
       - large
       - fast
       - reasoning
     client:
       type: openai_compatible
-      base_url: http://localhost:8006/v1
-      model: deepseek-ai/DeepSeek-V4-Flash
+      base_url: http://10.100.50.7:9007/v1
+      model: deepseek
+      api_key: not-needed
     deployment:
-      mode: local
-      source_model: deepseek-ai/DeepSeek-V4-Flash
-      gpu_set: "0,1,2,3"
-      tensor_parallel_size: 4
-      max_model_len: 131072
+      mode: remote

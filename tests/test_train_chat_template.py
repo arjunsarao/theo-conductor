@@ -95,6 +95,11 @@ def test_build_training_args_maps_train_config_to_grpo_config():
             num_generations=2,
             num_generations_eval=4,
             max_completion_length=128,
+            vllm_mode="server",
+            vllm_gpu_memory_utilization=0.2,
+            vllm_server_base_url="http://127.0.0.1:8000",
+            vllm_server_timeout=900,
+            vllm_group_port=51217,
         )
     )
 
@@ -105,6 +110,11 @@ def test_build_training_args_maps_train_config_to_grpo_config():
     assert args.num_generations == 2
     assert args.num_generations_eval == 4
     assert args.max_completion_length == 128
+    assert args.vllm_mode == "server"
+    assert args.vllm_gpu_memory_utilization == 0.2
+    assert args.vllm_server_base_url == "http://127.0.0.1:8000"
+    assert args.vllm_server_timeout == 900
+    assert args.vllm_group_port == 51217
 
 
 def test_vllm_training_uses_json_schema_constrained_decoding():
@@ -185,6 +195,7 @@ def test_paper_training_defaults_map_to_one_iteration_batch():
     assert args.sync_ref_model is False
     assert config.max_worker_tokens == 4096
     assert config.worker_temperature == 0.2
+    assert config.workflow_concurrency == 16
     assert config.execute_workflows is False
 
 

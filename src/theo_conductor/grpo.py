@@ -167,9 +167,13 @@ def compute_reward_traces(
     reference_answers = _as_list(kwargs.get("reference_answer"), len(completions))
     answer_types = _as_list(kwargs.get("answer_type"), len(completions))
     execute_workflows = bool(kwargs.get("execute_workflows", False))
+    workflow_concurrency = int(kwargs.get("workflow_concurrency", 16))
     use_heuristic_answer_matching = bool(kwargs.get("use_heuristic_answer_matching", True))
+    if workflow_concurrency <= 0:
+        raise ValueError("workflow concurrency must be positive")
 
     traces: list[RewardTrace] = []
+    pending_workflows: list[tuple[int, Task]] = []
 
     for index, completion in enumerate(completions):
         completion_text = _completion_to_text(completion)
@@ -210,27 +214,10 @@ def compute_reward_traces(
             )
             continue
 
-        run_result: RunResult | None = None
         final_answer = _extract_embedded_final_answer(raw_payload)
 
         if execute_workflows and (runner is not None or model_registry is not None):
-            try:
-                run_result = _run_runner_sync(runner or Runner(model_registry), task)  # type: ignore[arg-type]
-                final_answer = _extract_final_answer(run_result)
-            except Exception as exc:
-                traces.append(
-                    RewardTrace(
-                        completion=completion_text,
-                        reward=INVALID_WORKFLOW_REWARD,
-                        question=question,
-                        gold_answer=gold_answer,
-                        reference_answer=reference_answer,
-                        answer_type=answer_type,
-                        task=task,
-                        error=str(exc),
-                    )
-                )
-                continue
+            pending_workflows.append((len(traces), task))
 
         reward = (
             CORRECT_REWARD
@@ -250,10 +237,53 @@ def compute_reward_traces(
                 reference_answer=reference_answer,
                 answer_type=answer_type,
                 task=task,
-                run_result=run_result,
                 final_answer=final_answer,
             )
         )
+
+    if pending_workflows:
+        workflow_runner = runner or Runner(model_registry)  # type: ignore[arg-type]
+
+        async def run_pending_workflows() -> list[tuple[int, RunResult | Exception]]:
+            semaphore = asyncio.Semaphore(workflow_concurrency)
+
+            async def run_one(index: int, task: Task) -> tuple[int, RunResult | Exception]:
+                try:
+                    async with semaphore:
+                        return index, await workflow_runner.run(task)
+                except Exception as exc:
+                    return index, exc
+
+            return await asyncio.gather(
+                *(run_one(index, task) for index, task in pending_workflows)
+            )
+
+        for index, result in _run_async_sync(run_pending_workflows()):
+            trace = traces[index]
+            if isinstance(result, Exception):
+                traces[index] = replace(
+                    trace,
+                    reward=INVALID_WORKFLOW_REWARD,
+                    final_answer=None,
+                    error=str(result),
+                )
+                continue
+
+            final_answer = _extract_final_answer(result)
+            reward = (
+                CORRECT_REWARD
+                if use_heuristic_answer_matching
+                and trace.gold_answer is not None
+                and final_answer is not None
+                and answers_match(final_answer, trace.gold_answer, answer_type=trace.answer_type)
+                else VALID_WORKFLOW_REWARD
+            )
+            traces[index] = replace(
+                trace,
+                reward=reward,
+                run_result=result,
+                final_answer=final_answer,
+            )
 
     return traces
 
@@ -263,7 +293,7 @@ def judge_reward_traces(
     *,
     client: Any,
     max_tokens: int = 8192,
-    concurrency: int = 256,
+    concurrency: int = 16,
     attempts: int = 3,
     retry_delay_seconds: float = 1.0,
 ) -> list[RewardTrace]:
@@ -351,9 +381,14 @@ def judge_reward_traces(
         tuple[str, bool, str, int, dict[str, Any] | None, float | None]
     ]:
         semaphore = asyncio.Semaphore(concurrency)
-        return await asyncio.gather(
-            *(request_verdict(item_id, record, semaphore) for item_id, record in records)
+        results = await asyncio.gather(
+            *(request_verdict(item_id, record, semaphore) for item_id, record in records),
+            return_exceptions=True,
         )
+        errors = [result for result in results if isinstance(result, BaseException)]
+        if errors:
+            raise errors[0]
+        return [result for result in results if not isinstance(result, BaseException)]
 
     verdicts = {
         item_id: (correct, reason, attempts_used, usage, latency_ms)
@@ -390,9 +425,10 @@ def build_grpo_trainer(
     model_registry: ModelRegistry | None = None,
     runner: Runner | None = None,
     execute_workflows: bool = False,
+    workflow_concurrency: int = 16,
     judge_client: Any | None = None,
     judge_max_tokens: int = 8192,
-    judge_concurrency: int = 256,
+    judge_concurrency: int = 16,
     judge_attempts: int = 3,
     judge_retry_delay_seconds: float = 1.0,
     reward_kwargs: dict[str, Any] | None = None,
@@ -404,6 +440,8 @@ def build_grpo_trainer(
 
     if execute_workflows and judge_client is None:
         raise ValueError("Executed-workflow training requires a Kimi judge client.")
+    if workflow_concurrency <= 0:
+        raise ValueError("workflow concurrency must be positive")
     if judge_client is not None:
         if judge_max_tokens <= 0:
             raise ValueError("judge max tokens must be positive")
@@ -414,7 +452,11 @@ def build_grpo_trainer(
         if judge_retry_delay_seconds < 0:
             raise ValueError("judge retry delay must be non-negative")
 
-    reward_kwargs = {"execute_workflows": execute_workflows, **(reward_kwargs or {})}
+    reward_kwargs = {
+        "execute_workflows": execute_workflows,
+        "workflow_concurrency": workflow_concurrency,
+        **(reward_kwargs or {}),
+    }
     if judge_client is not None:
         # Kimi is the sole source of semantic correctness during training.
         # The local matcher remains available to standalone probes/tests only.

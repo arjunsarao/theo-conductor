@@ -59,6 +59,7 @@ class TrainConfig:
     max_completion_length: int = 1024
     max_worker_tokens: int = 4096
     worker_temperature: float = 0.2
+    workflow_concurrency: int = 16
     max_context_length: int | None = None
     validation_samples: int = 200
     eval_steps: int = 100
@@ -66,12 +67,19 @@ class TrainConfig:
     temperature: float = 1.0
     top_p: float = 1.0
     use_vllm: bool = False
+    vllm_mode: str = "colocate"
+    vllm_gpu_memory_utilization: float = 0.3
+    vllm_server_base_url: str | None = None
+    vllm_server_host: str = "0.0.0.0"
+    vllm_server_port: int = 8000
+    vllm_server_timeout: float = 240.0
+    vllm_group_port: int = 51216
     execute_workflows: bool = False
     judge_base_url: str = DEFAULT_JUDGE_BASE_URL
     judge_api_key: str = "change-this"
     judge_model: str = DEFAULT_JUDGE_MODEL
     judge_max_tokens: int = 8192
-    judge_concurrency: int = 256
+    judge_concurrency: int = 16
     judge_attempts: int = 3
     judge_retry_delay_seconds: float = 1.0
     judge_timeout_seconds: float = 600.0
@@ -196,6 +204,13 @@ def build_training_args(
         epsilon=0.2,
         sync_ref_model=False,
         use_vllm=config.use_vllm,
+        vllm_mode=config.vllm_mode,
+        vllm_gpu_memory_utilization=config.vllm_gpu_memory_utilization,
+        vllm_server_base_url=config.vllm_server_base_url,
+        vllm_server_host=config.vllm_server_host,
+        vllm_server_port=config.vllm_server_port,
+        vllm_server_timeout=config.vllm_server_timeout,
+        vllm_group_port=config.vllm_group_port,
         report_to=config.report_to,
         run_name=config.wandb_run_name,
         eval_strategy="no" if config.preflight else "steps",
@@ -319,6 +334,7 @@ def build_trainer(config: TrainConfig):
         model_registry=model_registry,
         runner=runner,
         execute_workflows=config.execute_workflows,
+        workflow_concurrency=config.workflow_concurrency,
         judge_client=judge_client,
         judge_max_tokens=config.judge_max_tokens,
         judge_concurrency=config.judge_concurrency,
@@ -495,6 +511,7 @@ def run_preflight(config: TrainConfig) -> None:
         model_registry=registry,
         runner=runner,
         execute_workflows=config.execute_workflows,
+        workflow_concurrency=config.workflow_concurrency,
         judge_client=judge_client,
         judge_max_tokens=config.judge_max_tokens,
         judge_concurrency=config.judge_concurrency,
@@ -593,6 +610,12 @@ def parse_args() -> TrainConfig:
         default=0.2,
         help="Sampling temperature for worker-model workflow steps (default: 0.2).",
     )
+    parser.add_argument(
+        "--workflow-concurrency",
+        type=int,
+        default=16,
+        help="Maximum number of rollout workflows executed concurrently (default: 16).",
+    )
     parser.add_argument("--max-context-length", type=int)
     parser.add_argument("--validation-samples", type=int, default=200)
     parser.add_argument("--eval-steps", type=int, default=100)
@@ -606,6 +629,26 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--top-p", type=float, default=1.0)
     parser.add_argument("--use-vllm", action="store_true")
     parser.add_argument(
+        "--vllm-mode",
+        choices=("colocate", "server"),
+        default="colocate",
+        help="Run vLLM on the training GPU or connect to a dedicated TRL server (default: colocate).",
+    )
+    parser.add_argument(
+        "--vllm-gpu-memory-utilization",
+        type=float,
+        default=0.3,
+        help=(
+            "Fraction of each training GPU reserved by colocated vLLM generation "
+            "(default: 0.3)."
+        ),
+    )
+    parser.add_argument("--vllm-server-base-url")
+    parser.add_argument("--vllm-server-host", default="0.0.0.0")
+    parser.add_argument("--vllm-server-port", type=int, default=8000)
+    parser.add_argument("--vllm-server-timeout", type=float, default=240.0)
+    parser.add_argument("--vllm-group-port", type=int, default=51216)
+    parser.add_argument(
         "--execute-workflows",
         action="store_true",
         help="Execute workflows and score each valid rollout with Kimi; disabled by default.",
@@ -614,7 +657,7 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--judge-api-key", default=os.environ.get("KIMI_API_KEY", "change-this"))
     parser.add_argument("--judge-model", default=os.environ.get("KIMI_MODEL", DEFAULT_JUDGE_MODEL))
     parser.add_argument("--judge-max-tokens", type=int, default=8192)
-    parser.add_argument("--judge-concurrency", type=int, default=256)
+    parser.add_argument("--judge-concurrency", type=int, default=16)
     parser.add_argument("--judge-attempts", type=int, default=3)
     parser.add_argument("--judge-retry-delay-seconds", type=float, default=1.0)
     parser.add_argument("--judge-timeout-seconds", type=float, default=600.0)

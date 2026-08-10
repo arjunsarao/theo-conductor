@@ -141,7 +141,7 @@ over all linear layers; use `--lora-rank`, `--lora-alpha`, and
 configured base model.
 
 Executed-workflow training uses Kimi K2.6 as the sole semantic correctness
-judge. Every valid rollout is sent as its own judge request, with up to 256
+judge. Every valid rollout is sent as its own judge request, with up to 16
 requests in flight by default; malformed or invalid workflows retain their
 structural reward without being answer-judged. API or schema-validation
 failures retry only the affected item, and training stops if all attempts for
@@ -152,7 +152,9 @@ handling with `--judge-attempts`, `--judge-retry-delay-seconds`,
 and `--judge-timeout-seconds`. The default 8,192-token judge budget includes
 Kimi's reasoning tokens as well as its JSON verdict. Judge clients disable the
 OpenAI SDK's internal retries so `--judge-attempts` is the exact number of item
-attempts recorded in training traces.
+attempts recorded in training traces. Remote worker workflows execute with up
+to 16 rollouts in flight by default; tune this batching pressure with
+`--workflow-concurrency`.
 
 ## Small-model MegaScience benchmark
 
@@ -239,10 +241,14 @@ RUN_MODE=train MODEL_CONFIG=configs/worker_pool_small.yaml \
 
 Local deployment settings live beside each model's client configuration:
 `source_model`, `gpu_set`, `tensor_parallel_size`, `max_model_len`, and
-optional `gpu_memory_utilization`. Remote entries need only
+optional `kv_cache_dtype` and `gpu_memory_utilization`. Remote entries need only
 `deployment.mode: remote`. Each config's `train_gpu_set` selects conductor
-devices and can be overridden with `TRAIN_GPUS`; `VLLM_EXTRA_ARGS` appends
-flags to every locally managed vLLM server.
+training devices and can be overridden with `TRAIN_GPUS`; `VLLM_EXTRA_ARGS`
+appends flags to every locally managed worker server. In training mode the
+launcher uses GPU 0 for PyTorch/LoRA training and starts a dedicated TRL vLLM
+generation server on GPU 1. Generation placement and capacity can be tuned with
+`GENERATION_GPU`, `GENERATION_VLLM_GPU_MEMORY_UTILIZATION`, and
+`GENERATION_VLLM_MAX_MODEL_LEN`.
 
 Benchmark mode uses the same `DATASET` and `VALIDATION_SAMPLES` settings.
 `BENCHMARK_TOTAL_SAMPLES` and `BENCHMARK_VALIDATION_SAMPLES` provide

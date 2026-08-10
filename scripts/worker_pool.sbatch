@@ -4,11 +4,13 @@
 #SBATCH --time=24:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=96
-#SBATCH --mem=0
-#SBATCH --gres=gpu:8
+#SBATCH --cpus-per-task=24
+#SBATCH --mem=192G
+#SBATCH --gres=gpu:2
 #SBATCH --output=slurm_logs/%x-%j.out
 #SBATCH --error=slurm_logs/%x-%j.err
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=arjun@firstprinciples.com
 
 # Launch and verify a worker pool described by MODEL_CONFIG. Each model must
 # have deployment.mode set to "local" or "remote". Local entries are
@@ -23,7 +25,7 @@
 set -Eeuo pipefail
 
 REPO_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-CONFIG="${MODEL_CONFIG:-${REPO_ROOT}/configs/worker_pool_small.yaml}"
+CONFIG="${MODEL_CONFIG:-${REPO_ROOT}/configs/worker_pool_large.yaml}"
 RUN_MODE="${RUN_MODE:-smoke}"
 DATASET="${DATASET:-megascience}"
 DATASET_SAMPLES="${DATASET_SAMPLES:-}"
@@ -41,6 +43,13 @@ TRAIN_OUTPUT_DIR="${TRAIN_OUTPUT_DIR:-${REPO_ROOT}/outputs/grpo-${SLURM_JOB_ID:-
 BENCHMARK_OUTPUT_DIR="${BENCHMARK_OUTPUT_DIR:-${REPO_ROOT}/outputs/${DATASET}-worker-pool}"
 WANDB_PROJECT="${WANDB_PROJECT:-theo-conductor}"
 TRAIN_EXTRA_ARGS="${TRAIN_EXTRA_ARGS:-}"
+GENERATION_GPU="${GENERATION_GPU:-1}"
+GENERATION_VLLM_HOST="${GENERATION_VLLM_HOST:-127.0.0.1}"
+GENERATION_VLLM_PORT="${GENERATION_VLLM_PORT:-8007}"
+GENERATION_VLLM_GROUP_PORT="${GENERATION_VLLM_GROUP_PORT:-51216}"
+GENERATION_VLLM_GPU_MEMORY_UTILIZATION="${GENERATION_VLLM_GPU_MEMORY_UTILIZATION:-0.90}"
+GENERATION_VLLM_MAX_MODEL_LEN="${GENERATION_VLLM_MAX_MODEL_LEN:-8192}"
+GENERATION_VLLM_READY_TIMEOUT="${GENERATION_VLLM_READY_TIMEOUT:-900}"
 GPU_MEMORY_LOG_INTERVAL="${GPU_MEMORY_LOG_INTERVAL:-5}"
 
 export HF_HOME="${THEO_HF_HOME:-/mnt/data/home/arjun/.cache/huggingface}"
@@ -82,7 +91,8 @@ fi
 mkdir -p "$LOCAL_ROOT" "$LOG_ROOT" "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE" "$HF_XET_CACHE"
 
 # Fields: index, ID, mode, base URL, served name, source model, GPU set,
-# tensor parallel size, served context, and per-model memory utilization.
+# tensor parallel size, served context, KV-cache dtype, and per-model memory
+# utilization.
 mapfile -t MODEL_ROWS < <(python - "$CONFIG" <<'PY'
 import sys
 from urllib.parse import urlparse
@@ -112,7 +122,7 @@ for index, model in enumerate(models):
     if mode not in {"local", "remote"}:
         raise SystemExit(f"{path}: model {index} deployment.mode must be local or remote")
 
-    base_url = str(client.get("base_ursql", "")).rstrip("/")
+    base_url = str(client.get("base_url", "")).rstrip("/")
     served_name = str(client.get("model", ""))
     parsed = urlparse(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or not served_name:
@@ -123,6 +133,7 @@ for index, model in enumerate(models):
     gpu_set = str(deployment.get("gpu_set", ""))
     tensor_parallel = deployment.get("tensor_parallel_size", "")
     max_model_len = deployment.get("max_model_len", model.get("context_length", ""))
+    kv_cache_dtype = deployment.get("kv_cache_dtype", "")
     memory_utilization = deployment.get("gpu_memory_utilization", "")
 
     if mode == "local":
@@ -159,6 +170,7 @@ for index, model in enumerate(models):
         gpu_set,
         tensor_parallel,
         max_model_len,
+        kv_cache_dtype,
         memory_utilization,
     ]
     if any("\t" in str(value) or "\n" in str(value) for value in fields):
@@ -170,7 +182,7 @@ PY
 
 LOCAL_COUNT=0
 for row in "${MODEL_ROWS[@]}"; do
-  IFS=$'\t' read -r _ _ mode _ _ _ _ _ _ _ <<< "$row"
+  IFS=$'\t' read -r _ _ mode _ _ _ _ _ _ _ _ <<< "$row"
   [[ "$mode" == "local" ]] && ((LOCAL_COUNT += 1))
 done
 
@@ -180,12 +192,20 @@ if (( LOCAL_COUNT > 0 )); then
   done
 fi
 if [[ "$RUN_MODE" == "train" ]]; then
-  command -v nvidia-smi >/dev/null || { echo "Training requires command: nvidia-smi" >&2; exit 2; }
+  for command in nvidia-smi trl; do
+    command -v "$command" >/dev/null || { echo "Training requires command: $command" >&2; exit 2; }
+  done
+  IFS=',' read -r -a train_gpus <<< "$TRAIN_GPUS"
+  for train_gpu in "${train_gpus[@]}"; do
+    [[ "$train_gpu" != "$GENERATION_GPU" ]] || {
+      echo "GPU $GENERATION_GPU cannot be assigned to both training and the vLLM generation server" >&2
+      exit 2
+    }
+  done
   for row in "${MODEL_ROWS[@]}"; do
-    IFS=$'\t' read -r _ model_id mode _ _ _ gpu_set _ _ _ <<< "$row"
+    IFS=$'\t' read -r _ model_id mode _ _ _ gpu_set _ _ _ _ <<< "$row"
     [[ "$mode" == "local" ]] || continue
     IFS=',' read -r -a worker_gpus <<< "$gpu_set"
-    IFS=',' read -r -a train_gpus <<< "$TRAIN_GPUS"
     for worker_gpu in "${worker_gpus[@]}"; do
       for train_gpu in "${train_gpus[@]}"; do
         [[ "$worker_gpu" != "$train_gpu" ]] || {
@@ -217,7 +237,7 @@ PY
 # Refuse to interfere with listeners unless the operator explicitly identified
 # them as stale. Remote endpoints never enter this cleanup path.
 for row in "${MODEL_ROWS[@]}"; do
-  IFS=$'\t' read -r _ model_id mode base_url _ _ _ _ _ _ <<< "$row"
+  IFS=$'\t' read -r _ model_id mode base_url _ _ _ _ _ _ _ <<< "$row"
   [[ "$mode" == "local" ]] || continue
   port=$(python - "$base_url" <<'PY'
 import sys
@@ -269,7 +289,7 @@ download() {
 }
 
 for row in "${MODEL_ROWS[@]}"; do
-  IFS=$'\t' read -r index model_id mode base_url served source gpu_set tp max_len model_memory <<< "$row"
+  IFS=$'\t' read -r index model_id mode base_url served source gpu_set tp max_len model_kv_dtype model_memory <<< "$row"
   if [[ "$mode" == "remote" ]]; then
     echo "Using remote worker: $model_id ($served at $base_url)"
     continue
@@ -284,12 +304,13 @@ print(urlparse(sys.argv[1]).port)
 PY
 )
   memory="${model_memory:-$GPU_MEMORY_UTILIZATION}"
+  kv_dtype="${model_kv_dtype:-$KV_CACHE_DTYPE}"
   args=(serve "$model_dir" --host 127.0.0.1 --port "$port"
         --served-model-name "$served"
         --tensor-parallel-size "$tp"
         --max-model-len "$max_len"
         --gpu-memory-utilization "$memory")
-  [[ -n "$KV_CACHE_DTYPE" ]] && args+=(--kv-cache-dtype "$KV_CACHE_DTYPE")
+  [[ -n "$kv_dtype" ]] && args+=(--kv-cache-dtype "$kv_dtype")
   # Intentional splitting allows operators to append multiple vLLM flags.
   # shellcheck disable=SC2206
   extra=( $VLLM_EXTRA_ARGS )
@@ -305,7 +326,7 @@ done
 
 deadline=$((SECONDS + READY_TIMEOUT))
 for row in "${MODEL_ROWS[@]}"; do
-  IFS=$'\t' read -r index model_id mode base_url served _ _ _ _ _ <<< "$row"
+  IFS=$'\t' read -r index model_id mode base_url served _ _ _ _ _ _ <<< "$row"
   models_url="${base_url%/}/models"
   until models_json=$(curl --fail --silent --show-error \
       --connect-timeout 15 --max-time 30 \
@@ -330,29 +351,11 @@ PY
   echo "Ready: $model_id ($served)"
 done
 
-echo "Running ModelRegistry generation smoke test"
-PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" python - "$CONFIG" <<'PY'
-import asyncio
-import sys
-
-from theo_conductor.models.registry import ModelRegistry
-
-async def main():
-    registry = ModelRegistry.from_yaml_file(sys.argv[1])
-    for model_id, spec in registry._models.items():
-        response = await spec.client.generate(
-            instruction="Reply with exactly: SMOKE_TEST_OK",
-            question="Verify this inference endpoint.",
-            context={},
-            max_tokens=32,
-            temperature=0.0,
-        )
-        if not response.text.strip():
-            raise RuntimeError(f"{model_id}: empty completion")
-        print(f"PASS {model_id}: {response.text[:120]!r}")
-
-asyncio.run(main())
-PY
+echo "Running config-driven model access and generation test"
+python "${REPO_ROOT}/test_model_access.py" \
+  --config "$CONFIG" \
+  --max-tokens "${SMOKE_MAX_TOKENS:-1024}" \
+  --timeout "${SMOKE_TIMEOUT:-300}"
 
 if [[ "$RUN_MODE" == "smoke" ]]; then
   echo "Worker-pool smoke test passed."
@@ -380,6 +383,57 @@ if [[ "$RUN_MODE" == "benchmark" ]]; then
   exit 0
 fi
 
+CONDUCTOR_MODEL=$(python - "$CONFIG" <<'PY'
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    config = yaml.safe_load(handle) or {}
+model = config.get("conductor_model")
+if not isinstance(model, str) or not model.strip():
+    raise SystemExit(f"{sys.argv[1]} must define a non-empty conductor_model")
+print(model)
+PY
+)
+
+for server_port in "$GENERATION_VLLM_PORT" "$GENERATION_VLLM_GROUP_PORT"; do
+  if port_is_busy "$server_port"; then
+    echo "Required TRL vLLM server port $server_port is already in use" >&2
+    exit 2
+  fi
+done
+
+generation_log="${LOG_ROOT}/conductor-vllm-${SLURM_JOB_ID:-manual}.log"
+echo "Starting dedicated conductor vLLM server on GPU $GENERATION_GPU: $CONDUCTOR_MODEL"
+CUDA_VISIBLE_DEVICES="$GENERATION_GPU" trl vllm-serve \
+  --model "$CONDUCTOR_MODEL" \
+  --host "$GENERATION_VLLM_HOST" \
+  --port "$GENERATION_VLLM_PORT" \
+  --tensor-parallel-size 1 \
+  --gpu-memory-utilization "$GENERATION_VLLM_GPU_MEMORY_UTILIZATION" \
+  --max-model-len "$GENERATION_VLLM_MAX_MODEL_LEN" \
+  >"$generation_log" 2>&1 &
+generation_pid=$!
+PIDS+=("$generation_pid")
+
+generation_deadline=$((SECONDS + GENERATION_VLLM_READY_TIMEOUT))
+generation_health_url="http://${GENERATION_VLLM_HOST}:${GENERATION_VLLM_PORT}/health/"
+until curl --fail --silent --show-error --connect-timeout 5 --max-time 15 "$generation_health_url" >/dev/null; do
+  if ! kill -0 "$generation_pid" 2>/dev/null; then
+    echo "Dedicated conductor vLLM server exited during startup; log follows:" >&2
+    tail -n 120 "$generation_log" >&2
+    exit 1
+  fi
+  (( SECONDS < generation_deadline )) || {
+    echo "Timed out waiting for $generation_health_url; server log follows:" >&2
+    tail -n 120 "$generation_log" >&2
+    exit 1
+  }
+  sleep 5
+done
+echo "Ready: dedicated conductor vLLM server at $generation_health_url"
+
 mkdir -p "$TRAIN_OUTPUT_DIR"
 if [[ "$GPU_MEMORY_LOG_INTERVAL" != "0" ]]; then
   "${REPO_ROOT}/scripts/log_gpu_memory.sh" "$TRAIN_OUTPUT_DIR" "$GPU_MEMORY_LOG_INTERVAL" &
@@ -387,7 +441,15 @@ if [[ "$GPU_MEMORY_LOG_INTERVAL" != "0" ]]; then
 fi
 
 echo "Starting executed-workflow GRPO on GPU(s) $TRAIN_GPUS"
-train_extra=(--use-vllm --execute-workflows --wandb-project "$WANDB_PROJECT")
+train_extra=(
+  --use-vllm
+  --vllm-mode server
+  --vllm-server-base-url "http://${GENERATION_VLLM_HOST}:${GENERATION_VLLM_PORT}"
+  --vllm-server-timeout "$GENERATION_VLLM_READY_TIMEOUT"
+  --vllm-group-port "$GENERATION_VLLM_GROUP_PORT"
+  --execute-workflows
+  --wandb-project "$WANDB_PROJECT"
+)
 train_extra+=(--dataset "$DATASET" --validation-samples "$VALIDATION_SAMPLES")
 [[ -n "$DATASET_SAMPLES" ]] && train_extra+=(--dataset-samples "$DATASET_SAMPLES")
 # shellcheck disable=SC2206
