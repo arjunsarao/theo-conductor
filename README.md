@@ -140,21 +140,24 @@ over all linear layers; use `--lora-rank`, `--lora-alpha`, and
 `--lora-dropout` to tune the adapter, or `--model-name` to override the
 configured base model.
 
-Executed-workflow training uses Kimi K2.6 as the sole semantic correctness
-judge. Every valid rollout is sent as its own judge request, with up to 16
-requests in flight by default; malformed or invalid workflows retain their
-structural reward without being answer-judged. API or schema-validation
-failures retry only the affected item, and training stops if all attempts for
-an item fail—there is no local exact/numeric heuristic fallback. Configure the
-endpoint with `KIMI_BASE_URL`, `KIMI_API_KEY`, and `KIMI_MODEL`; tune failure
+Executed-workflow training uses Kimi K2.6 as the primary semantic correctness
+judge and GLM 5.2 as its fallback. Every valid rollout is sent as its own judge
+request, with up to 16 requests in flight by default. Both judges use a strict
+JSON Schema structured-output response; malformed or invalid workflows retain
+their structural reward without being answer-judged. API or schema-validation
+failures retry the affected item on Kimi, then on GLM. Training stops only if
+both exhaust their attempts; there is no local exact/numeric heuristic fallback.
+Configure Kimi with `KIMI_BASE_URL`, `KIMI_API_KEY`, and `KIMI_MODEL`, and GLM
+with `GLM_BASE_URL`, `GLM_API_KEY`, and `GLM_MODEL`; tune failure
 handling with `--judge-attempts`, `--judge-retry-delay-seconds`,
 `--judge-max-tokens`, `--judge-concurrency`, `--judge-connect-timeout-seconds`,
 and `--judge-timeout-seconds`. The default 8,192-token judge budget includes
-Kimi's reasoning tokens as well as its JSON verdict. Judge clients disable the
-OpenAI SDK's internal retries so `--judge-attempts` is the exact number of item
-attempts recorded in training traces. Remote worker workflows execute with up
-to 16 rollouts in flight by default; tune this batching pressure with
-`--workflow-concurrency`.
+the model's reasoning tokens as well as its JSON verdict. If a judge exhausts
+that budget before emitting a verdict, the affected item's next retry doubles
+the budget, capped at four times the configured value. Judge clients disable
+the OpenAI SDK's internal retries; training traces record the total Kimi and GLM
+attempts used. Remote worker workflows execute with up to 16 rollouts in flight
+by default; tune this batching pressure with `--workflow-concurrency`.
 
 ## Small-model MegaScience benchmark
 
@@ -174,14 +177,17 @@ include accuracy with a bootstrap 95% confidence interval, accuracy by subject,
 token usage, latency, request failures, and missing-`FINAL:` extraction failures.
 Re-running the command resumes completed model/question pairs.
 
-Kimi K2.6 judges semantic correctness after generation by default, with multiple
-answers packed into each API request. Each JSONL record adds `judge_correct`,
+Kimi K2.6 judges semantic correctness after generation by default, with GLM 5.2
+used after Kimi exhausts its attempts and multiple answers packed into each API
+request. Both use the same strict JSON Schema structured-output contract. Each
+JSONL record adds `judge_correct`,
 `judge_reason`, `judge_response`, `judge_model`, and `judge_error`; the top-level
 `correct` field contains the authoritative judge verdict. Judge progress is
 atomically checkpointed and resumes on rerun. Set
-`KIMI_BASE_URL`, `KIMI_API_KEY`, or `KIMI_MODEL` to override the cluster
-defaults. Use `--judge-batch-size` and `--judge-concurrency` to tune judge
-throughput, or pass `--no-judge` to disable judging.
+`KIMI_BASE_URL`, `KIMI_API_KEY`, or `KIMI_MODEL` to override the primary and
+`GLM_BASE_URL`, `GLM_API_KEY`, or `GLM_MODEL` to override the fallback. Use
+`--judge-batch-size` and `--judge-concurrency` to tune judge throughput, or pass
+`--no-judge` to disable judging.
 
 To judge or re-judge an existing results file and refresh its `summary.json`:
 

@@ -22,6 +22,8 @@ from .models.openai_compat import OpenAICompatibleClient
 DEFAULT_VALIDATION_SAMPLES = 200
 DEFAULT_JUDGE_BASE_URL = "http://10.100.50.35:30080/v1"
 DEFAULT_JUDGE_MODEL = "moonshotai/Kimi-K2.6"
+DEFAULT_FALLBACK_JUDGE_BASE_URL = DEFAULT_JUDGE_BASE_URL
+DEFAULT_FALLBACK_JUDGE_MODEL = "glm-5.2-fp8"
 DEFAULT_INSTRUCTION = (
     "Solve the problem independently. Show enough reasoning to make the result verifiable, then end "
     "with a separate line exactly formatted as FINAL: <answer>. The FINAL line should contain only "
@@ -34,10 +36,35 @@ equivalent wording, concise answers, harmless extra explanation, and answers tha
 the reference. Reject answers with a substantive contradiction, wrong value, missing required part, or
 reasoning whose final conclusion is wrong. Judge the candidate's actual answer, not formatting such as
 whether it used FINAL:.
-
-Return exactly one JSON array with one result for every input item, in the same order, and no other text:
-[{"id": "the input id", "correct": true, "reason": "One brief, concrete sentence explaining the verdict."}]
 """
+
+
+def build_judge_response_format(expected_ids: Sequence[str]) -> dict[str, Any]:
+    """Build the strict structured-output contract for one judge request."""
+    if not expected_ids:
+        raise ValueError("judge response schema requires at least one id")
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "judge_verdicts",
+            "strict": True,
+            "schema": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "enum": list(expected_ids)},
+                        "correct": {"type": "boolean"},
+                        "reason": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["id", "correct", "reason"],
+                    "additionalProperties": False,
+                },
+                "minItems": len(expected_ids),
+                "maxItems": len(expected_ids),
+            },
+        },
+    }
 
 
 def extract_final_answer(text: str) -> str | None:
@@ -109,6 +136,8 @@ async def judge_records(
     *,
     client: Any,
     judge_model: str = DEFAULT_JUDGE_MODEL,
+    fallback_client: Any | None = None,
+    fallback_judge_model: str = DEFAULT_FALLBACK_JUDGE_MODEL,
     concurrency: int = 8,
     batch_size: int = 10,
     max_tokens: int = 8192,
@@ -128,9 +157,12 @@ async def judge_records(
     semaphore = asyncio.Semaphore(concurrency)
     completed = 0
     pending: list[dict[str, Any]] = []
+    accepted_judge_models = {judge_model}
+    if fallback_client is not None:
+        accepted_judge_models.add(fallback_judge_model)
     for record in records:
         already_judged = (
-            record.get("judge_model") == judge_model
+            record.get("judge_model") in accepted_judge_models
             and isinstance(record.get("judge_correct"), bool)
             and not record.get("judge_error")
         )
@@ -156,33 +188,48 @@ async def judge_records(
         nonlocal completed
         identified_batch = [(f"batch-{batch_index}-item-{index}", record) for index, record in enumerate(records_batch)]
         expected_ids = [item_id for item_id, _ in identified_batch]
-        for attempt in range(1, attempts + 1):
-            try:
-                async with semaphore:
-                    response = await client.generate(
-                        instruction=JUDGE_INSTRUCTION,
-                        question=build_judge_batch_question(identified_batch),
-                        context={},
-                        max_tokens=max_tokens,
-                        temperature=0.0,
-                    )
-                verdicts = parse_judge_batch(response.text, expected_ids)
-                for item_id, record in identified_batch:
-                    correct, reason = verdicts[item_id]
-                    record.update(
-                        judge_correct=correct,
-                        judge_reason=reason,
-                        judge_response=json.dumps(
-                            {"id": item_id, "correct": correct, "reason": reason}, ensure_ascii=False
-                        ),
-                        correct=correct,
-                    )
+        backends = [(client, judge_model)]
+        if fallback_client is not None:
+            backends.append((fallback_client, fallback_judge_model))
+        last_error: Exception | None = None
+        judged = False
+        for backend, backend_model in backends:
+            for _attempt in range(1, attempts + 1):
+                try:
+                    async with semaphore:
+                        response = await backend.generate(
+                            instruction=JUDGE_INSTRUCTION,
+                            question=build_judge_batch_question(identified_batch),
+                            context={},
+                            max_tokens=max_tokens,
+                            temperature=0.0,
+                            response_format=build_judge_response_format(expected_ids),
+                        )
+                    verdicts = parse_judge_batch(response.text, expected_ids)
+                    for item_id, record in identified_batch:
+                        correct, reason = verdicts[item_id]
+                        record.update(
+                            judge_correct=correct,
+                            judge_model=backend_model,
+                            judge_reason=reason,
+                            judge_response=json.dumps(
+                                {"id": item_id, "correct": correct, "reason": reason}, ensure_ascii=False
+                            ),
+                            judge_error=None,
+                            correct=correct,
+                        )
+                    judged = True
+                    break
+                except Exception as exc:
+                    last_error = exc
+            if judged:
                 break
-            except Exception as exc:
-                if attempt == attempts:
-                    for _, record in identified_batch:
-                        record["judge_error"] = f"{type(exc).__name__}: {exc}"
-                        record["correct"] = False
+        if not judged:
+            assert last_error is not None
+            for _, record in identified_batch:
+                record["judge_model"] = backends[-1][1]
+                record["judge_error"] = f"{type(last_error).__name__}: {last_error}"
+                record["correct"] = False
 
         completed += len(records_batch)
         errors = sum(bool(record.get("judge_error")) for record in records_batch)
@@ -215,6 +262,8 @@ async def judge_records_with_checkpoints(
     results_path: Path,
     client: Any,
     judge_model: str = DEFAULT_JUDGE_MODEL,
+    fallback_client: Any | None = None,
+    fallback_judge_model: str = DEFAULT_FALLBACK_JUDGE_MODEL,
     concurrency: int = 8,
     batch_size: int = 10,
     max_tokens: int = 8192,
@@ -225,11 +274,14 @@ async def judge_records_with_checkpoints(
     """Judge records and atomically checkpoint the JSONL after each small batch."""
     if checkpoint_size <= 0:
         raise ValueError("judge checkpoint size must be positive")
+    accepted_judge_models = {judge_model}
+    if fallback_client is not None:
+        accepted_judge_models.add(fallback_judge_model)
     pending = [
         record
         for record in records
         if force
-        or record.get("judge_model") != judge_model
+        or record.get("judge_model") not in accepted_judge_models
         or not isinstance(record.get("judge_correct"), bool)
         or bool(record.get("judge_error"))
     ]
@@ -238,6 +290,8 @@ async def judge_records_with_checkpoints(
             pending[start : start + checkpoint_size],
             client=client,
             judge_model=judge_model,
+            fallback_client=fallback_client,
+            fallback_judge_model=fallback_judge_model,
             concurrency=concurrency,
             batch_size=batch_size,
             max_tokens=max_tokens,
@@ -524,11 +578,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--judge",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Use Kimi K2.6 as a semantic correctness judge (enabled by default).",
+        help="Use Kimi K2.6 with GLM fallback as semantic correctness judges (enabled by default).",
     )
     parser.add_argument("--judge-base-url", default=os.environ.get("KIMI_BASE_URL", DEFAULT_JUDGE_BASE_URL))
     parser.add_argument("--judge-api-key", default=os.environ.get("KIMI_API_KEY", "change-this"))
     parser.add_argument("--judge-model", default=os.environ.get("KIMI_MODEL", DEFAULT_JUDGE_MODEL))
+    parser.add_argument(
+        "--fallback-judge-base-url",
+        default=os.environ.get("GLM_BASE_URL", DEFAULT_FALLBACK_JUDGE_BASE_URL),
+    )
+    parser.add_argument("--fallback-judge-api-key", default=os.environ.get("GLM_API_KEY", "change-this"))
+    parser.add_argument(
+        "--fallback-judge-model",
+        default=os.environ.get("GLM_MODEL", DEFAULT_FALLBACK_JUDGE_MODEL),
+    )
     parser.add_argument("--judge-concurrency", type=int, default=8)
     parser.add_argument("--judge-batch-size", type=int, default=10)
     parser.add_argument("--judge-max-tokens", type=int, default=8192)
@@ -579,12 +642,19 @@ async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
             api_key=args.judge_api_key,
             model=args.judge_model,
         )
+        fallback_judge_client = OpenAICompatibleClient(
+            base_url=args.fallback_judge_base_url,
+            api_key=args.fallback_judge_api_key,
+            model=args.fallback_judge_model,
+        )
         await judge_records_with_checkpoints(
             selected_records,
             all_records=records,
             results_path=results_path,
             client=judge_client,
             judge_model=args.judge_model,
+            fallback_client=fallback_judge_client,
+            fallback_judge_model=args.fallback_judge_model,
             concurrency=args.judge_concurrency,
             batch_size=args.judge_batch_size,
             max_tokens=args.judge_max_tokens,
@@ -602,6 +672,7 @@ async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
         "temperature": args.temperature,
         "judge_enabled": args.judge,
         "judge_model": args.judge_model if args.judge else None,
+        "fallback_judge_model": args.fallback_judge_model if args.judge else None,
         "judge_batch_size": args.judge_batch_size if args.judge else None,
         **summarize_records(selected_records, bootstrap_samples=args.bootstrap_samples, seed=args.seed),
     }

@@ -3,6 +3,7 @@ import json
 
 from theo_conductor.benchmark import (
     bootstrap_accuracy_ci,
+    build_judge_response_format,
     extract_final_answer,
     judge_records,
     oracle_routing_breakdown,
@@ -69,6 +70,21 @@ def test_parse_judge_batch_requires_every_requested_id():
         raise AssertionError("non-boolean judge verdict should fail")
 
 
+def test_judge_response_format_is_a_strict_json_array_schema():
+    response_format = build_judge_response_format(["a", "b"])
+
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    schema = response_format["json_schema"]["schema"]
+    assert schema["type"] == "array"
+    assert schema["minItems"] == schema["maxItems"] == 2
+    assert schema["items"]["properties"]["id"] == {
+        "type": "string",
+        "enum": ["a", "b"],
+    }
+    assert schema["items"]["additionalProperties"] is False
+
+
 def test_judge_records_batches_requests_and_makes_judge_authoritative():
     records = [
         {
@@ -101,11 +117,51 @@ def test_judge_records_batches_requests_and_makes_judge_authoritative():
     asyncio.run(judge_records(records, client=client, batch_size=10))
 
     assert len(client.calls) == 1
+    assert client.calls[0]["response_format"]["type"] == "json_schema"
     assert records[0]["judge_correct"] is True
     assert records[0]["correct"] is True
     assert records[0]["judge_reason"] == "The answer matches exactly."
     assert records[1]["judge_correct"] is False
     assert records[1]["correct"] is False
+
+
+def test_judge_records_uses_glm_after_kimi_exhausts_attempts():
+    records = [{
+        "question": "What is 2 + 2?",
+        "gold_answer": "4",
+        "reference_answer": "4",
+        "response": "FINAL: 4",
+        "extracted_answer": "4",
+        "error": None,
+    }]
+
+    class FailingClient:
+        model = "kimi"
+
+        def __init__(self):
+            self.calls = []
+
+        async def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            raise RuntimeError("Kimi unavailable")
+
+    kimi = FailingClient()
+    glm = JudgeClient([(True, "Matches.")])
+    glm.model = "glm"
+
+    asyncio.run(judge_records(
+        records,
+        client=kimi,
+        judge_model="kimi",
+        fallback_client=glm,
+        fallback_judge_model="glm",
+        attempts=2,
+    ))
+
+    assert len(kimi.calls) == 2
+    assert len(glm.calls) == 1
+    assert records[0]["judge_model"] == "glm"
+    assert records[0]["judge_correct"] is True
 
 
 def test_run_benchmark_evaluates_every_model_on_same_rows_and_resumes(tmp_path):

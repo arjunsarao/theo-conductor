@@ -14,7 +14,12 @@ import torch
 from transformers import AutoProcessor, AutoTokenizer
 from trl.trainer.grpo_config import GRPOConfig
 
-from theo_conductor.benchmark import DEFAULT_JUDGE_BASE_URL, DEFAULT_JUDGE_MODEL
+from theo_conductor.benchmark import (
+    DEFAULT_FALLBACK_JUDGE_BASE_URL,
+    DEFAULT_FALLBACK_JUDGE_MODEL,
+    DEFAULT_JUDGE_BASE_URL,
+    DEFAULT_JUDGE_MODEL,
+)
 from theo_conductor.data import TRAINING_DATASETS, build_conductor_splits
 from theo_conductor.grpo import (
     INVALID_WORKFLOW_REWARD,
@@ -78,6 +83,9 @@ class TrainConfig:
     judge_base_url: str = DEFAULT_JUDGE_BASE_URL
     judge_api_key: str = "change-this"
     judge_model: str = DEFAULT_JUDGE_MODEL
+    fallback_judge_base_url: str = DEFAULT_FALLBACK_JUDGE_BASE_URL
+    fallback_judge_api_key: str = "change-this"
+    fallback_judge_model: str = DEFAULT_FALLBACK_JUDGE_MODEL
     judge_max_tokens: int = 8192
     judge_concurrency: int = 16
     judge_attempts: int = 3
@@ -326,6 +334,18 @@ def build_trainer(config: TrainConfig):
         if config.execute_workflows
         else None
     )
+    fallback_judge_client = (
+        OpenAICompatibleClient(
+            base_url=config.fallback_judge_base_url,
+            api_key=config.fallback_judge_api_key,
+            model=config.fallback_judge_model,
+            timeout_seconds=config.judge_timeout_seconds,
+            connect_timeout_seconds=config.judge_connect_timeout_seconds,
+            max_retries=0,
+        )
+        if config.execute_workflows
+        else None
+    )
     return build_grpo_trainer(
         model=conductor_model,
         train_dataset=train_dataset,
@@ -336,6 +356,7 @@ def build_trainer(config: TrainConfig):
         execute_workflows=config.execute_workflows,
         workflow_concurrency=config.workflow_concurrency,
         judge_client=judge_client,
+        fallback_judge_client=fallback_judge_client,
         judge_max_tokens=config.judge_max_tokens,
         judge_concurrency=config.judge_concurrency,
         judge_attempts=config.judge_attempts,
@@ -404,19 +425,27 @@ def _structural_reward_probe(registry: ModelRegistry) -> None:
         raise RuntimeError(f"Structural reward probe failed: expected {expected}, got {rewards}.")
 
 
-def _validate_preflight_judgment(trace: RewardTrace, *, judge_model: str) -> None:
-    """Require evidence that the real preflight rollout was judged by Kimi."""
+def _validate_preflight_judgment(
+    trace: RewardTrace,
+    *,
+    judge_model: str,
+    fallback_judge_model: str | None = None,
+) -> None:
+    """Require evidence that the real preflight rollout was remotely judged."""
     if trace.judge_error:
-        raise RuntimeError(f"Kimi judging failed during preflight: {trace.judge_error}")
+        raise RuntimeError(f"Remote judging failed during preflight: {trace.judge_error}")
     if not isinstance(trace.judge_correct, bool):
-        raise RuntimeError("Preflight rollout completed without a Kimi correctness verdict.")
-    if trace.judge_model != judge_model:
+        raise RuntimeError("Preflight rollout completed without a remote correctness verdict.")
+    expected_models = {judge_model}
+    if fallback_judge_model is not None:
+        expected_models.add(fallback_judge_model)
+    if trace.judge_model not in expected_models:
         raise RuntimeError(
-            f"Preflight used judge model {trace.judge_model!r}; expected {judge_model!r}."
+            f"Preflight used judge model {trace.judge_model!r}; expected one of {sorted(expected_models)!r}."
         )
     if not isinstance(trace.judge_attempts, int) or trace.judge_attempts < 1:
         raise RuntimeError(
-            f"Preflight Kimi verdict has an invalid attempt count: {trace.judge_attempts!r}."
+            f"Preflight judge verdict has an invalid attempt count: {trace.judge_attempts!r}."
         )
 
 
@@ -503,6 +532,18 @@ def run_preflight(config: TrainConfig) -> None:
         if config.execute_workflows
         else None
     )
+    fallback_judge_client = (
+        OpenAICompatibleClient(
+            base_url=config.fallback_judge_base_url,
+            api_key=config.fallback_judge_api_key,
+            model=config.fallback_judge_model,
+            timeout_seconds=config.judge_timeout_seconds,
+            connect_timeout_seconds=config.judge_connect_timeout_seconds,
+            max_retries=0,
+        )
+        if config.execute_workflows
+        else None
+    )
     trainer = build_grpo_trainer(
         model=conductor_model,
         train_dataset=train_dataset.select(range(2)),
@@ -513,6 +554,7 @@ def run_preflight(config: TrainConfig) -> None:
         execute_workflows=config.execute_workflows,
         workflow_concurrency=config.workflow_concurrency,
         judge_client=judge_client,
+        fallback_judge_client=fallback_judge_client,
         judge_max_tokens=config.judge_max_tokens,
         judge_concurrency=config.judge_concurrency,
         judge_attempts=config.judge_attempts,
@@ -537,7 +579,11 @@ def run_preflight(config: TrainConfig) -> None:
             )
         if any(registry.get(step.model_id).provider != "vllm" for step in generated.task.workflow):
             raise RuntimeError("Parsed workflow used a non-vLLM worker; select a vLLM-only model config for preflight.")
-        _validate_preflight_judgment(generated, judge_model=config.judge_model)
+        _validate_preflight_judgment(
+            generated,
+            judge_model=config.judge_model,
+            fallback_judge_model=config.fallback_judge_model,
+        )
     if not any(preflight_dir.glob("checkpoint-*")):
         raise RuntimeError(f"GRPO preflight did not save a checkpoint in {preflight_dir}.")
 
@@ -651,11 +697,23 @@ def parse_args() -> TrainConfig:
     parser.add_argument(
         "--execute-workflows",
         action="store_true",
-        help="Execute workflows and score each valid rollout with Kimi; disabled by default.",
+        help="Execute workflows and score each valid rollout with Kimi and GLM fallback; disabled by default.",
     )
     parser.add_argument("--judge-base-url", default=os.environ.get("KIMI_BASE_URL", DEFAULT_JUDGE_BASE_URL))
     parser.add_argument("--judge-api-key", default=os.environ.get("KIMI_API_KEY", "change-this"))
     parser.add_argument("--judge-model", default=os.environ.get("KIMI_MODEL", DEFAULT_JUDGE_MODEL))
+    parser.add_argument(
+        "--fallback-judge-base-url",
+        default=os.environ.get("GLM_BASE_URL", DEFAULT_FALLBACK_JUDGE_BASE_URL),
+    )
+    parser.add_argument(
+        "--fallback-judge-api-key",
+        default=os.environ.get("GLM_API_KEY", "change-this"),
+    )
+    parser.add_argument(
+        "--fallback-judge-model",
+        default=os.environ.get("GLM_MODEL", DEFAULT_FALLBACK_JUDGE_MODEL),
+    )
     parser.add_argument("--judge-max-tokens", type=int, default=8192)
     parser.add_argument("--judge-concurrency", type=int, default=16)
     parser.add_argument("--judge-attempts", type=int, default=3)

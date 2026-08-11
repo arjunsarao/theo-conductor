@@ -152,12 +152,12 @@ def test_preflight_judgment_requires_matching_kimi_metadata():
 
     _validate_preflight_judgment(trace, judge_model="kimi-test")
 
-    with pytest.raises(RuntimeError, match="without a Kimi correctness verdict"):
+    with pytest.raises(RuntimeError, match="without a remote correctness verdict"):
         _validate_preflight_judgment(
             RewardTrace(completion="{}", reward=0.5, judge_model="kimi-test", judge_attempts=1),
             judge_model="kimi-test",
         )
-    with pytest.raises(RuntimeError, match="expected 'kimi-test'"):
+    with pytest.raises(RuntimeError, match="expected one of"):
         _validate_preflight_judgment(
             RewardTrace(
                 completion="{}",
@@ -168,6 +168,18 @@ def test_preflight_judgment_requires_matching_kimi_metadata():
             ),
             judge_model="kimi-test",
         )
+
+    _validate_preflight_judgment(
+        RewardTrace(
+            completion="{}",
+            reward=1.0,
+            judge_correct=True,
+            judge_model="glm-test",
+            judge_attempts=4,
+        ),
+        judge_model="kimi-test",
+        fallback_judge_model="glm-test",
+    )
 
 
 def test_paper_training_defaults_map_to_one_iteration_batch():

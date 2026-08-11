@@ -22,6 +22,8 @@ sys.path.insert(0, str(ROOT / "src"))
 from theo_conductor.benchmark import (  # noqa: E402
     DEFAULT_JUDGE_BASE_URL,
     DEFAULT_JUDGE_MODEL,
+    DEFAULT_FALLBACK_JUDGE_BASE_URL,
+    DEFAULT_FALLBACK_JUDGE_MODEL,
     _load_completed,
     judge_records_with_checkpoints,
     summarize_records,
@@ -41,6 +43,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", default=os.environ.get("KIMI_BASE_URL", DEFAULT_JUDGE_BASE_URL))
     parser.add_argument("--api-key", default=os.environ.get("KIMI_API_KEY", "change-this"))
     parser.add_argument("--model", default=os.environ.get("KIMI_MODEL", DEFAULT_JUDGE_MODEL))
+    parser.add_argument(
+        "--fallback-base-url",
+        default=os.environ.get("GLM_BASE_URL", DEFAULT_FALLBACK_JUDGE_BASE_URL),
+    )
+    parser.add_argument("--fallback-api-key", default=os.environ.get("GLM_API_KEY", "change-this"))
+    parser.add_argument(
+        "--fallback-model",
+        default=os.environ.get("GLM_MODEL", DEFAULT_FALLBACK_JUDGE_MODEL),
+    )
     parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=10)
     parser.add_argument("--max-tokens", type=int, default=8192)
@@ -60,12 +71,19 @@ async def async_main() -> int:
         raise ValueError(f"No benchmark records found in {results_path}")
 
     client = OpenAICompatibleClient(base_url=args.base_url, api_key=args.api_key, model=args.model)
+    fallback_client = OpenAICompatibleClient(
+        base_url=args.fallback_base_url,
+        api_key=args.fallback_api_key,
+        model=args.fallback_model,
+    )
     await judge_records_with_checkpoints(
         records,
         all_records=records,
         results_path=results_path,
         client=client,
         judge_model=args.model,
+        fallback_client=fallback_client,
+        fallback_judge_model=args.fallback_model,
         concurrency=args.concurrency,
         batch_size=args.batch_size,
         max_tokens=args.max_tokens,
@@ -84,6 +102,7 @@ async def async_main() -> int:
     summary.update(
         judge_enabled=True,
         judge_model=args.model,
+        fallback_judge_model=args.fallback_model,
         judge_batch_size=args.batch_size,
         **summarize_records(records, bootstrap_samples=args.bootstrap_samples, seed=seed),
     )

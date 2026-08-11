@@ -274,6 +274,7 @@ def test_judge_reward_traces_sends_one_request_per_rollout():
         ["rollout-1"],
     ]
     assert all(call["max_tokens"] == 8192 for call in client.calls)
+    assert all(call["response_format"]["type"] == "json_schema" for call in client.calls)
     assert [trace.reward for trace in judged] == [1.0, 0.5]
     assert [trace.judge_correct for trace in judged] == [True, False]
     assert all(trace.judge_attempts == 1 for trace in judged)
@@ -353,7 +354,7 @@ def test_judge_reward_traces_retries_the_item_then_succeeds():
     assert judged.judge_attempts == 2
 
 
-def test_judge_reward_traces_raises_after_retries_without_heuristic_fallback():
+def test_judge_reward_traces_raises_after_retries_without_remote_fallback():
     traces = compute_reward_traces([VALID_COMPLETION], ground_truth=["A"])
     client = BatchJudgeClient([RuntimeError("unavailable"), "still not json"])
 
@@ -361,6 +362,30 @@ def test_judge_reward_traces_raises_after_retries_without_heuristic_fallback():
         judge_reward_traces(traces, client=client, attempts=2, retry_delay_seconds=0)
 
     assert len(client.calls) == 2
+
+
+def test_judge_reward_traces_falls_back_to_glm_after_kimi_fails():
+    traces = compute_reward_traces([VALID_COMPLETION], ground_truth=["A"])
+    kimi = BatchJudgeClient([RuntimeError("unavailable"), "still not json"])
+    kimi.model = "kimi"
+    glm = BatchJudgeClient([
+        '[{"id":"rollout-0","correct":true,"reason":"Matches."}]'
+    ])
+    glm.model = "glm"
+
+    [judged] = judge_reward_traces(
+        traces,
+        client=kimi,
+        fallback_client=glm,
+        attempts=2,
+        retry_delay_seconds=0,
+    )
+
+    assert len(kimi.calls) == 2
+    assert len(glm.calls) == 1
+    assert judged.judge_model == "glm"
+    assert judged.judge_attempts == 3
+    assert judged.judge_correct is True
 
 
 def test_judge_reward_traces_reports_truncated_malformed_response():
@@ -389,7 +414,42 @@ def test_judge_reward_traces_reports_truncated_malformed_response():
     assert "response_chars=0" in message
 
 
-def test_trainer_uses_kimi_verdict_instead_of_local_answer_match(monkeypatch):
+def test_judge_reward_traces_expands_budget_after_length_finish():
+    class Choice:
+        finish_reason = "length"
+
+    class RawResponse:
+        choices = [Choice()]
+
+    class RecoveringJudgeClient:
+        def __init__(self):
+            self.calls = []
+
+        async def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                return ModelResponse(text="", raw=RawResponse())
+            return ModelResponse(
+                text='[{"id":"rollout-0","correct":true,"reason":"Matches."}]'
+            )
+
+    traces = compute_reward_traces([VALID_COMPLETION], ground_truth=["A"])
+    client = RecoveringJudgeClient()
+
+    [judged] = judge_reward_traces(
+        traces,
+        client=client,
+        attempts=2,
+        retry_delay_seconds=0,
+    )
+
+    assert [call["max_tokens"] for call in client.calls] == [8192, 16384]
+    assert client.calls[1]["response_format"] == client.calls[0]["response_format"]
+    assert judged.reward == 1.0
+    assert judged.judge_attempts == 2
+
+
+def test_trainer_uses_remote_judge_verdict_instead_of_local_answer_match(monkeypatch):
     captured = {}
 
     class StubTrainer:
@@ -459,5 +519,5 @@ def test_trainer_records_conductor_generation_usage_and_latency(monkeypatch):
 def test_executed_workflow_trainer_requires_an_explicit_judge_client(monkeypatch):
     monkeypatch.setattr("theo_conductor.grpo.GRPOTrainer", lambda **kwargs: kwargs)
 
-    with pytest.raises(ValueError, match="requires a Kimi judge client"):
+    with pytest.raises(ValueError, match="requires a primary judge client"):
         build_grpo_trainer(model="unused", train_dataset=[], execute_workflows=True)
