@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import subprocess
 import sys
@@ -22,6 +23,8 @@ from theo_conductor.benchmark import (
 )
 from theo_conductor.data import TRAINING_DATASETS, build_conductor_splits
 from theo_conductor.grpo import (
+    DEFAULT_FALLBACK_JUDGE_MAX_TOKENS,
+    DEFAULT_JUDGE_MAX_TOKENS,
     INVALID_WORKFLOW_REWARD,
     MALFORMED_REWARD,
     VALID_WORKFLOW_REWARD,
@@ -32,7 +35,13 @@ from theo_conductor.grpo import (
 )
 from theo_conductor.models.openai_compat import OpenAICompatibleClient
 from theo_conductor.models.registry import ModelRegistry
-from theo_conductor.prompt import build_conductor_json_schema, build_conductor_prompt
+from theo_conductor.prompt import (
+    build_conductor_json_schema,
+    build_conductor_prompt,
+    build_default_examples,
+    build_prompt,
+    build_worker_model_lines,
+)
 from theo_conductor.runner import Runner
 from theo_conductor.traces import TrainingTraceLogger
 
@@ -62,7 +71,7 @@ class TrainConfig:
     num_generations_eval: int = 8
     generation_batch_size: int = 256
     max_completion_length: int = 1024
-    max_worker_tokens: int = 4096
+    max_worker_tokens: int = 16_384
     worker_temperature: float = 0.2
     workflow_concurrency: int = 16
     max_context_length: int | None = None
@@ -86,11 +95,12 @@ class TrainConfig:
     fallback_judge_base_url: str = DEFAULT_FALLBACK_JUDGE_BASE_URL
     fallback_judge_api_key: str = "change-this"
     fallback_judge_model: str = DEFAULT_FALLBACK_JUDGE_MODEL
-    judge_max_tokens: int = 8192
+    judge_max_tokens: int = DEFAULT_JUDGE_MAX_TOKENS
+    fallback_judge_max_tokens: int = DEFAULT_FALLBACK_JUDGE_MAX_TOKENS
     judge_concurrency: int = 16
-    judge_attempts: int = 3
+    judge_attempts: int = 1
     judge_retry_delay_seconds: float = 1.0
-    judge_timeout_seconds: float = 600.0
+    judge_timeout_seconds: float = 300.0
     judge_connect_timeout_seconds: float = 30.0
     bf16: bool | None = None
     fp16: bool = False
@@ -171,24 +181,50 @@ def prepare_grpo_dataset(
     if max_samples is not None:
         dataset = dataset.select(range(min(max_samples, len(dataset))))
 
-    def format_row(row: dict[str, Any]) -> dict[str, Any]:
-        question = row["question"]
-        return {
-            "prompt": build_conductor_prompt(question, model_registry),
-            "question": question,
-            "answer": row["answer"],
-            "answer_type": row.get("answer_type"),
-            "reference_answer": row.get("reference_answer"),
-            "id": row.get("id"),
-        }
+    # Passing only plain values to a module-level transform gives Hugging Face
+    # Datasets a stable fingerprint. Capturing ModelRegistry (and its async
+    # HTTP clients) in a local closure forced every Slurm process to remap the
+    # full dataset and emitted a serialization warning.
+    return dataset.map(
+        _format_grpo_row,
+        fn_kwargs={
+            "model_lines": build_worker_model_lines(model_registry),
+            "examples": build_default_examples(model_registry),
+        },
+    )
 
-    return dataset.map(format_row)
+
+def _format_grpo_row(
+    row: dict[str, Any],
+    *,
+    model_lines: list[str],
+    examples: list[str],
+) -> dict[str, Any]:
+    question = row["question"]
+    return {
+        "prompt": build_prompt(
+            model_lines,
+            ["No external tools are available."],
+            examples,
+            question,
+        ),
+        "question": question,
+        "answer": row["answer"],
+        "answer_type": row.get("answer_type"),
+        "reference_answer": row.get("reference_answer"),
+        "id": row.get("id"),
+    }
 
 
 def build_training_args(
     config: TrainConfig,
     model_registry: ModelRegistry | None = None,
 ) -> GRPOConfig:
+    if config.max_steps <= 0:
+        raise ValueError("max_steps must be positive")
+    if not 0 <= config.warmup_ratio <= 1:
+        raise ValueError("warmup_ratio must be between 0 and 1")
+
     training_kwargs = dict(
         output_dir=config.output_dir,
         seed=config.seed,
@@ -198,7 +234,9 @@ def build_training_args(
         gradient_accumulation_steps=config.gradient_accumulation_steps,
         learning_rate=config.learning_rate,
         lr_scheduler_type=config.lr_scheduler_type,
-        warmup_ratio=config.warmup_ratio,
+        # Transformers 5.2 removes warmup_ratio. With max_steps authoritative
+        # here, resolving the ratio once preserves the same schedule.
+        warmup_steps=math.ceil(config.max_steps * config.warmup_ratio),
         optim="adamw_torch_fused",
         adam_beta1=0.9,
         adam_beta2=0.999,
@@ -358,6 +396,7 @@ def build_trainer(config: TrainConfig):
         judge_client=judge_client,
         fallback_judge_client=fallback_judge_client,
         judge_max_tokens=config.judge_max_tokens,
+        fallback_judge_max_tokens=config.fallback_judge_max_tokens,
         judge_concurrency=config.judge_concurrency,
         judge_attempts=config.judge_attempts,
         judge_retry_delay_seconds=config.judge_retry_delay_seconds,
@@ -556,6 +595,7 @@ def run_preflight(config: TrainConfig) -> None:
         judge_client=judge_client,
         fallback_judge_client=fallback_judge_client,
         judge_max_tokens=config.judge_max_tokens,
+        fallback_judge_max_tokens=config.fallback_judge_max_tokens,
         judge_concurrency=config.judge_concurrency,
         judge_attempts=config.judge_attempts,
         judge_retry_delay_seconds=config.judge_retry_delay_seconds,
@@ -647,8 +687,8 @@ def parse_args() -> TrainConfig:
     parser.add_argument(
         "--max-worker-tokens",
         type=int,
-        default=4096,
-        help="Maximum generated tokens for each worker-model workflow step (default: 4096).",
+        default=16_384,
+        help="Maximum generated tokens for each worker-model workflow step (default: 16384).",
     )
     parser.add_argument(
         "--worker-temperature",
@@ -714,11 +754,27 @@ def parse_args() -> TrainConfig:
         "--fallback-judge-model",
         default=os.environ.get("GLM_MODEL", DEFAULT_FALLBACK_JUDGE_MODEL),
     )
-    parser.add_argument("--judge-max-tokens", type=int, default=8192)
+    parser.add_argument(
+        "--judge-max-tokens",
+        type=int,
+        default=DEFAULT_JUDGE_MAX_TOKENS,
+        help="Maximum Kimi judge output tokens (default: 16384).",
+    )
+    parser.add_argument(
+        "--fallback-judge-max-tokens",
+        type=int,
+        default=DEFAULT_FALLBACK_JUDGE_MAX_TOKENS,
+        help="Maximum GLM fallback judge output tokens (default: 32768).",
+    )
     parser.add_argument("--judge-concurrency", type=int, default=16)
-    parser.add_argument("--judge-attempts", type=int, default=3)
+    parser.add_argument(
+        "--judge-attempts",
+        type=int,
+        default=1,
+        help="Attempts per judge backend before fallback (default: 1).",
+    )
     parser.add_argument("--judge-retry-delay-seconds", type=float, default=1.0)
-    parser.add_argument("--judge-timeout-seconds", type=float, default=600.0)
+    parser.add_argument("--judge-timeout-seconds", type=float, default=300.0)
     parser.add_argument("--judge-connect-timeout-seconds", type=float, default=30.0)
     parser.add_argument("--bf16", action="store_true", default=None)
     parser.add_argument("--fp16", action="store_true")

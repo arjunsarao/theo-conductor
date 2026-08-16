@@ -119,9 +119,9 @@ The launcher supports local, remote, and mixed worker pools. It downloads,
 starts, and stops only models marked `deployment.mode: local`; remote workers
 are readiness-checked without being managed by the job.
 
-Training and its held-out evaluation split use MegaScience by default. Select
-`megascience`, `hle`, `gpqa`, or the combined `hle-gpqa` dataset with
-`DATASET`:
+The direct training CLI uses MegaScience by default; the unified Slurm launcher
+defaults to HLE. Select `megascience`, `hle`, `gpqa`, or the combined
+`hle-gpqa` dataset with `DATASET`:
 
 ```bash
 DATASET=hle-gpqa MODEL_CONFIG=configs/worker_pool_large.yaml RUN_MODE=train \
@@ -145,19 +145,24 @@ judge and GLM 5.2 as its fallback. Every valid rollout is sent as its own judge
 request, with up to 16 requests in flight by default. Both judges use a strict
 JSON Schema structured-output response; malformed or invalid workflows retain
 their structural reward without being answer-judged. API or schema-validation
-failures retry the affected item on Kimi, then on GLM. Training stops only if
-both exhaust their attempts; there is no local exact/numeric heuristic fallback.
+failures are isolated to the affected item and then sent to GLM. A response that
+already hit a backend's output ceiling moves directly to the fallback rather
+than repeating the same request. If both judges fail, that rollout keeps its
+neutral valid-workflow reward and records the error while other verdicts and
+training continue. The end-to-end preflight still requires a successful remote
+verdict, so a broken judge configuration fails before the full run starts.
 Configure Kimi with `KIMI_BASE_URL`, `KIMI_API_KEY`, and `KIMI_MODEL`, and GLM
 with `GLM_BASE_URL`, `GLM_API_KEY`, and `GLM_MODEL`; tune failure
 handling with `--judge-attempts`, `--judge-retry-delay-seconds`,
 `--judge-max-tokens`, `--judge-concurrency`, `--judge-connect-timeout-seconds`,
-and `--judge-timeout-seconds`. The default 8,192-token judge budget includes
-the model's reasoning tokens as well as its JSON verdict. If a judge exhausts
-that budget before emitting a verdict, the affected item's next retry doubles
-the budget, capped at four times the configured value. Judge clients disable
+`--fallback-judge-max-tokens`, and `--judge-timeout-seconds`. The default Kimi
+budget is 16,384 output tokens and the default GLM fallback budget is 32,768
+output tokens. These budgets include the model's reasoning tokens as well as
+its JSON verdict. Judge clients disable
 the OpenAI SDK's internal retries; training traces record the total Kimi and GLM
 attempts used. Remote worker workflows execute with up to 16 rollouts in flight
-by default; tune this batching pressure with `--workflow-concurrency`.
+and a 16,384-token output ceiling per worker step by default; tune these with
+`--workflow-concurrency` and `--max-worker-tokens`.
 
 ## Small-model MegaScience benchmark
 

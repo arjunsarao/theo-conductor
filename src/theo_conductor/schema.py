@@ -45,6 +45,7 @@ class StepOutput(BaseModel):
     text: str
     usage: dict[str, Any] | None = None
     latency_ms: float | None = None
+    finish_reason: str | None = None
 
 
 class RunResult(BaseModel):
@@ -61,6 +62,7 @@ class ModelResponse:
     raw: Any | None = None
     usage: dict[str, Any] | None = None
     latency_ms: float | None = None
+    finish_reason: str | None = None
 
 
 class ModelClient(Protocol):

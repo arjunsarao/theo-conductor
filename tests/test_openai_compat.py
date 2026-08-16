@@ -7,9 +7,14 @@ import pytest
 from theo_conductor.models.openai_compat import OpenAICompatibleClient, build_message
 
 
-def _completion(text: str = "{}") -> SimpleNamespace:
+def _completion(text: str = "{}", *, finish_reason: str = "stop") -> SimpleNamespace:
     return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content=text),
+                finish_reason=finish_reason,
+            )
+        ],
         usage=None,
     )
 
@@ -23,7 +28,7 @@ def test_openai_compatible_client_forwards_constrained_response_format():
         "json_schema": {"name": "workflow", "strict": True, "schema": {"type": "object"}},
     }
 
-    asyncio.run(
+    response = asyncio.run(
         client.generate(
             instruction="Plan.",
             question="Question?",
@@ -33,6 +38,7 @@ def test_openai_compatible_client_forwards_constrained_response_format():
     )
 
     assert create.await_args.kwargs["response_format"] is response_format
+    assert response.finish_reason == "stop"
 
 
 def test_openai_compatible_client_does_not_constrain_worker_responses():

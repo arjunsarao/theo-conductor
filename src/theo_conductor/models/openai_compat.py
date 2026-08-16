@@ -58,12 +58,19 @@ class OpenAICompatibleClient:
 
         latency_ms = (time.perf_counter() - start) * 1000
 
-        text = completion.choices[0].message.content or ""
+        choice = completion.choices[0]
+        text = choice.message.content or ""
         usage = None
         if completion.usage is not None:
             usage = completion.usage.model_dump()
 
-        return ModelResponse(text=text, raw=completion, usage=usage, latency_ms=latency_ms)
+        return ModelResponse(
+            text=text,
+            raw=completion,
+            usage=usage,
+            latency_ms=latency_ms,
+            finish_reason=getattr(choice, "finish_reason", None),
+        )
 
 
 def build_message(*, instruction: str, question: str, context: dict[str, Any]) -> list[dict[str, str]]:

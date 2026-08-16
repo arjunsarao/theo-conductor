@@ -7,7 +7,7 @@ import pytest
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
-from theo_conductor.schema import Task, Step, Difficulty, ModelSpec
+from theo_conductor.schema import Task, Step, Difficulty, ModelResponse, ModelSpec
 from theo_conductor.runner import Runner
 from theo_conductor.models.registry import ModelRegistry
 from theo_conductor.models.fake import FakeModelClient
@@ -138,10 +138,37 @@ def test_runner_applies_worker_decoding_settings(fake_registry):
         ],
     )
 
-    asyncio.run(Runner(fake_registry, max_worker_tokens=4096, worker_temperature=0.2).run(task))
+    asyncio.run(Runner(fake_registry, max_worker_tokens=16_384, worker_temperature=0.2).run(task))
 
-    assert fake_registry.get(0).client.calls[0]["max_tokens"] == 4096
+    assert fake_registry.get(0).client.calls[0]["max_tokens"] == 16_384
     assert fake_registry.get(0).client.calls[0]["temperature"] == 0.2
+
+
+def test_runner_records_worker_finish_reason():
+    class TruncatedClient:
+        async def generate(self, **kwargs):
+            return ModelResponse(text="", finish_reason="length")
+
+    registry = ModelRegistry(
+        [ModelSpec(model_idx="solver", client=TruncatedClient())]
+    )
+    task = Task(
+        task_type="test",
+        difficulty=Difficulty.EASY,
+        question="Question?",
+        workflow=[
+            Step(
+                step_id="final",
+                model_idx="solver",
+                instruction="Answer.",
+                access_list=["question"],
+            )
+        ],
+    )
+
+    result = asyncio.run(Runner(registry).run(task))
+
+    assert result.outputs["final"].finish_reason == "length"
 
 
 def test_runner_adds_final_answer_protocol_when_instruction_omits_it(fake_registry):

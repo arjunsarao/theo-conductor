@@ -5,9 +5,9 @@ import json
 import re
 import threading
 import time
-from types import MethodType
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
+from types import MethodType
 from typing import Any
 
 from pydantic import ValidationError
@@ -30,6 +30,8 @@ MALFORMED_REWARD = 0.0
 INVALID_WORKFLOW_REWARD = 0.2
 VALID_WORKFLOW_REWARD = 0.5
 CORRECT_REWARD = 1.0
+DEFAULT_JUDGE_MAX_TOKENS = 16_384
+DEFAULT_FALLBACK_JUDGE_MAX_TOKENS = 32_768
 
 # This small, explicit protocol lets reward/evaluation code pull an answer out
 # of a verbose worker response without guessing which sentence is the answer.
@@ -89,6 +91,14 @@ class JudgeBatchError(RuntimeError):
             f"Judge{target} failed after {attempts} attempt{'s' if attempts != 1 else ''}: "
             f"{type(cause).__name__}: {cause}"
         )
+
+
+class JudgeResponseError(ValueError):
+    """A judge returned a response that could not satisfy the verdict contract."""
+
+    def __init__(self, message: str, *, finish_reason: str | None = None):
+        self.finish_reason = finish_reason
+        super().__init__(message)
 
 
 def parse_conductor_json(
@@ -306,20 +316,24 @@ def judge_reward_traces(
     *,
     client: Any,
     fallback_client: Any | None = None,
-    max_tokens: int = 8192,
+    max_tokens: int = DEFAULT_JUDGE_MAX_TOKENS,
+    fallback_max_tokens: int = DEFAULT_FALLBACK_JUDGE_MAX_TOKENS,
     concurrency: int = 16,
-    attempts: int = 3,
+    attempts: int = 1,
     retry_delay_seconds: float = 1.0,
 ) -> list[RewardTrace]:
     """Judge each valid rollout with bounded-concurrency primary/fallback requests.
 
     Structural and execution failures retain their 0.0/0.2 rewards and are not
     answer-judged. A malformed response or request error retries only that
-    item; exhausting retries raises ``JudgeBatchError`` instead of substituting
-    a heuristic.
+    item. An exhausted item keeps its structural reward and records the error;
+    failures in one remote request must not discard successful verdicts for the
+    rest of an expensive rollout batch.
     """
     if max_tokens <= 0:
         raise ValueError("judge max tokens must be positive")
+    if fallback_max_tokens <= 0:
+        raise ValueError("fallback judge max tokens must be positive")
     if concurrency <= 0:
         raise ValueError("judge concurrency must be positive")
     if attempts <= 0:
@@ -358,9 +372,12 @@ def judge_reward_traces(
     ) -> tuple[str, bool, str, str | None, int, dict[str, Any] | None, float | None]:
         last_error: BaseException | None = None
         total_attempts = 0
-        backends = [client] + ([fallback_client] if fallback_client is not None else [])
-        for backend in backends:
-            request_max_tokens = max_tokens
+        backends = [(client, max_tokens)] + (
+            [(fallback_client, fallback_max_tokens)]
+            if fallback_client is not None
+            else []
+        )
+        for backend, backend_max_tokens in backends:
             for attempt in range(1, attempts + 1):
                 total_attempts += 1
                 try:
@@ -369,7 +386,7 @@ def judge_reward_traces(
                             instruction=JUDGE_INSTRUCTION,
                             question=build_judge_batch_question([(item_id, record)]),
                             context={},
-                            max_tokens=request_max_tokens,
+                            max_tokens=backend_max_tokens,
                             temperature=0.0,
                             response_format=build_judge_response_format([item_id]),
                         )
@@ -378,13 +395,10 @@ def judge_reward_traces(
                     except ValueError as exc:
                         finish_reason = _response_finish_reason(response)
                         response_tail = response.text[-500:] if response.text else "<empty>"
-                        if finish_reason == "length":
-                            # Thinking models can spend the entire output budget on
-                            # hidden reasoning and return an empty content field.
-                            request_max_tokens = min(request_max_tokens * 2, max_tokens * 4)
-                        raise ValueError(
+                        raise JudgeResponseError(
                             f"{exc}; finish_reason={finish_reason!r}; "
-                            f"response_chars={len(response.text)}; response_tail={response_tail!r}"
+                            f"response_chars={len(response.text)}; response_tail={response_tail!r}",
+                            finish_reason=finish_reason,
                         ) from exc
                     return (
                         item_id,
@@ -397,6 +411,11 @@ def judge_reward_traces(
                     )
                 except Exception as exc:
                     last_error = exc
+                    # Repeating an identical request cannot repair a response
+                    # that already consumed the backend's full output budget.
+                    # Move directly to the fallback backend instead.
+                    if isinstance(exc, JudgeResponseError) and exc.finish_reason == "length":
+                        break
                     if attempt < attempts and retry_delay_seconds:
                         await asyncio.sleep(retry_delay_seconds * (2 ** (attempt - 1)))
         assert last_error is not None
@@ -404,31 +423,38 @@ def judge_reward_traces(
             total_attempts,
             last_error,
             item_id=item_id,
-            model=getattr(backends[-1], "model", None),
+            model=getattr(backends[-1][0], "model", None),
         ) from last_error
 
     async def request_verdicts() -> list[
         tuple[str, bool, str, str | None, int, dict[str, Any] | None, float | None]
+        | BaseException
     ]:
         semaphore = asyncio.Semaphore(concurrency)
-        results = await asyncio.gather(
+        return await asyncio.gather(
             *(request_verdict(item_id, record, semaphore) for item_id, record in records),
             return_exceptions=True,
         )
-        errors = [result for result in results if isinstance(result, BaseException)]
-        if errors:
-            raise errors[0]
-        return [result for result in results if not isinstance(result, BaseException)]
 
-    verdicts = {
-        item_id: (correct, reason, model, attempts_used, usage, latency_ms)
-        for item_id, correct, reason, model, attempts_used, usage, latency_ms in _run_async_sync(
-            request_verdicts()
-        )
-    }
+    results = _run_async_sync(request_verdicts())
     judged = list(traces)
-    for (index, trace), (item_id, _) in zip(judgeable, records, strict=True):
-        correct, reason, judge_model, attempts_used, usage, latency_ms = verdicts[item_id]
+    for (index, trace), result in zip(judgeable, results, strict=True):
+        if isinstance(result, BaseException):
+            error = (
+                result
+                if isinstance(result, JudgeBatchError)
+                else JudgeBatchError(1, result, item_id=f"rollout-{index}")
+            )
+            judged[index] = replace(
+                trace,
+                reward=VALID_WORKFLOW_REWARD,
+                judge_model=error.model or getattr(client, "model", None),
+                judge_error=str(error),
+                judge_attempts=error.attempts,
+            )
+            continue
+
+        item_id, correct, reason, judge_model, attempts_used, usage, latency_ms = result
         judged[index] = replace(
             trace,
             reward=CORRECT_REWARD if correct else VALID_WORKFLOW_REWARD,
@@ -458,9 +484,10 @@ def build_grpo_trainer(
     workflow_concurrency: int = 16,
     judge_client: Any | None = None,
     fallback_judge_client: Any | None = None,
-    judge_max_tokens: int = 8192,
+    judge_max_tokens: int = DEFAULT_JUDGE_MAX_TOKENS,
+    fallback_judge_max_tokens: int = DEFAULT_FALLBACK_JUDGE_MAX_TOKENS,
     judge_concurrency: int = 16,
-    judge_attempts: int = 3,
+    judge_attempts: int = 1,
     judge_retry_delay_seconds: float = 1.0,
     reward_kwargs: dict[str, Any] | None = None,
     trace_observer: Callable[[Sequence[RewardTrace]], Any] | None = None,
@@ -476,6 +503,8 @@ def build_grpo_trainer(
     if judge_client is not None:
         if judge_max_tokens <= 0:
             raise ValueError("judge max tokens must be positive")
+        if fallback_judge_max_tokens <= 0:
+            raise ValueError("fallback judge max tokens must be positive")
         if judge_concurrency <= 0:
             raise ValueError("judge concurrency must be positive")
         if judge_attempts <= 0:
@@ -527,32 +556,16 @@ def build_grpo_trainer(
                     )
                 ]
         if judge_client is not None:
-            try:
-                traces = judge_reward_traces(
-                    traces,
-                    client=judge_client,
-                    fallback_client=fallback_judge_client,
-                    max_tokens=judge_max_tokens,
-                    concurrency=judge_concurrency,
-                    attempts=judge_attempts,
-                    retry_delay_seconds=judge_retry_delay_seconds,
-                )
-            except JudgeBatchError as exc:
-                if trace_observer is not None:
-                    trace_observer(
-                        [
-                            replace(
-                                trace,
-                                judge_model=exc.model or getattr(judge_client, "model", None),
-                                judge_error=str(exc),
-                                judge_attempts=exc.attempts,
-                            )
-                            if trace.task is not None and trace.error is None
-                            else trace
-                            for trace in traces
-                        ]
-                    )
-                raise
+            traces = judge_reward_traces(
+                traces,
+                client=judge_client,
+                fallback_client=fallback_judge_client,
+                max_tokens=judge_max_tokens,
+                fallback_max_tokens=fallback_judge_max_tokens,
+                concurrency=judge_concurrency,
+                attempts=judge_attempts,
+                retry_delay_seconds=judge_retry_delay_seconds,
+            )
         if trace_observer is not None:
             trace_observer(traces)
         return [trace.reward for trace in traces]
@@ -861,6 +874,9 @@ def _run_async_sync(coroutine: Any) -> Any:
 
 def _response_finish_reason(response: Any) -> str | None:
     """Best-effort extraction of an OpenAI-compatible completion finish reason."""
+    finish_reason = getattr(response, "finish_reason", None)
+    if finish_reason is not None:
+        return finish_reason
     raw = getattr(response, "raw", None)
     choices = getattr(raw, "choices", None)
     if not choices:

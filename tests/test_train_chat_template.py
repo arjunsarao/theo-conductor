@@ -117,6 +117,18 @@ def test_build_training_args_maps_train_config_to_grpo_config():
     assert args.vllm_group_port == 51217
 
 
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (TrainConfig(max_steps=0), "max_steps must be positive"),
+        (TrainConfig(warmup_ratio=1.1), "warmup_ratio must be between 0 and 1"),
+    ],
+)
+def test_build_training_args_rejects_invalid_schedule(config, message):
+    with pytest.raises(ValueError, match=message):
+        build_training_args(config)
+
+
 def test_vllm_training_uses_json_schema_constrained_decoding():
     registry = ModelRegistry(
         [
@@ -199,13 +211,13 @@ def test_paper_training_defaults_map_to_one_iteration_batch():
     assert args.temperature == 1.0
     assert args.learning_rate == 1e-6
     assert str(args.lr_scheduler_type) == "SchedulerType.COSINE"
-    assert args.warmup_ratio == 0.03
+    assert args.warmup_steps == 6
     assert args.adam_beta1 == 0.9
     assert args.adam_beta2 == 0.999
     assert args.epsilon == 0.2
     assert args.beta == 0.0
     assert args.sync_ref_model is False
-    assert config.max_worker_tokens == 4096
+    assert config.max_worker_tokens == 16_384
     assert config.worker_temperature == 0.2
     assert config.workflow_concurrency == 16
     assert config.execute_workflows is False
@@ -299,6 +311,8 @@ def test_training_judge_cli_configuration(monkeypatch):
             "128",
             "--judge-max-tokens",
             "384",
+            "--fallback-judge-max-tokens",
+            "768",
             "--judge-retry-delay-seconds",
             "0.25",
             "--judge-timeout-seconds",
@@ -315,6 +329,7 @@ def test_training_judge_cli_configuration(monkeypatch):
     assert config.judge_attempts == 5
     assert config.judge_concurrency == 128
     assert config.judge_max_tokens == 384
+    assert config.fallback_judge_max_tokens == 768
     assert config.judge_retry_delay_seconds == 0.25
     assert config.judge_timeout_seconds == 900
     assert config.judge_connect_timeout_seconds == 45

@@ -44,3 +44,6 @@ vllm = { index = "vllm-cu129" }
 torch = { index = "pytorch-cu129" }
 torchvision = { index = "pytorch-cu129" }
 torchaudio = { index = "pytorch-cu129" }
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

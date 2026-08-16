@@ -27,7 +27,7 @@ set -Eeuo pipefail
 REPO_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 CONFIG="${MODEL_CONFIG:-${REPO_ROOT}/configs/worker_pool_large.yaml}"
 RUN_MODE="${RUN_MODE:-smoke}"
-DATASET="${DATASET:-megascience}"
+DATASET="${DATASET:-hle}"
 DATASET_SAMPLES="${DATASET_SAMPLES:-}"
 VALIDATION_SAMPLES="${VALIDATION_SAMPLES:-200}"
 LOCAL_ROOT="${LOCAL_MODEL_ROOT:-${THEO_MODEL_ROOT:-/mnt/data/home/arjun/.cache/theo-conductor/models}}"
@@ -328,7 +328,7 @@ deadline=$((SECONDS + READY_TIMEOUT))
 for row in "${MODEL_ROWS[@]}"; do
   IFS=$'\t' read -r index model_id mode base_url served _ _ _ _ _ _ <<< "$row"
   models_url="${base_url%/}/models"
-  until models_json=$(curl --fail --silent --show-error \
+  until models_json=$(curl --fail --silent \
       --connect-timeout 15 --max-time 30 \
       -H "Authorization: Bearer ${WORKER_API_KEY}" "$models_url"); do
     if [[ "$mode" == "local" ]] && ! kill -0 "${PID_BY_INDEX[$index]}" 2>/dev/null; then
@@ -419,7 +419,8 @@ PIDS+=("$generation_pid")
 
 generation_deadline=$((SECONDS + GENERATION_VLLM_READY_TIMEOUT))
 generation_health_url="http://${GENERATION_VLLM_HOST}:${GENERATION_VLLM_PORT}/health/"
-until curl --fail --silent --show-error --connect-timeout 5 --max-time 15 "$generation_health_url" >/dev/null; do
+until curl --fail --silent --connect-timeout 5 --max-time 15 "$generation_health_url" \
+    >/dev/null 2>&1; do
   if ! kill -0 "$generation_pid" 2>/dev/null; then
     echo "Dedicated conductor vLLM server exited during startup; log follows:" >&2
     tail -n 120 "$generation_log" >&2

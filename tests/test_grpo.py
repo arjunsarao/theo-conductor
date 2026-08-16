@@ -5,7 +5,6 @@ import pytest
 
 from theo_conductor.grpo import (
     ConductorParseError,
-    JudgeBatchError,
     answers_match,
     build_grpo_trainer,
     compute_reward_traces,
@@ -273,7 +272,7 @@ def test_judge_reward_traces_sends_one_request_per_rollout():
         ["rollout-0"],
         ["rollout-1"],
     ]
-    assert all(call["max_tokens"] == 8192 for call in client.calls)
+    assert all(call["max_tokens"] == 16_384 for call in client.calls)
     assert all(call["response_format"]["type"] == "json_schema" for call in client.calls)
     assert [trace.reward for trace in judged] == [1.0, 0.5]
     assert [trace.judge_correct for trace in judged] == [True, False]
@@ -354,14 +353,21 @@ def test_judge_reward_traces_retries_the_item_then_succeeds():
     assert judged.judge_attempts == 2
 
 
-def test_judge_reward_traces_raises_after_retries_without_remote_fallback():
+def test_judge_reward_traces_records_error_after_retries_without_remote_fallback():
     traces = compute_reward_traces([VALID_COMPLETION], ground_truth=["A"])
     client = BatchJudgeClient([RuntimeError("unavailable"), "still not json"])
 
-    with pytest.raises(JudgeBatchError, match="failed after 2 attempts"):
-        judge_reward_traces(traces, client=client, attempts=2, retry_delay_seconds=0)
+    [judged] = judge_reward_traces(
+        traces,
+        client=client,
+        attempts=2,
+        retry_delay_seconds=0,
+    )
 
     assert len(client.calls) == 2
+    assert "failed after 2 attempts" in judged.judge_error
+    assert judged.judge_attempts == 2
+    assert judged.reward == 0.5
 
 
 def test_judge_reward_traces_falls_back_to_glm_after_kimi_fails():
@@ -383,6 +389,8 @@ def test_judge_reward_traces_falls_back_to_glm_after_kimi_fails():
 
     assert len(kimi.calls) == 2
     assert len(glm.calls) == 1
+    assert all(call["max_tokens"] == 16_384 for call in kimi.calls)
+    assert glm.calls[0]["max_tokens"] == 32_768
     assert judged.judge_model == "glm"
     assert judged.judge_attempts == 3
     assert judged.judge_correct is True
@@ -401,52 +409,93 @@ def test_judge_reward_traces_reports_truncated_malformed_response():
 
     traces = compute_reward_traces([VALID_COMPLETION], ground_truth=["A"])
 
-    with pytest.raises(JudgeBatchError) as caught:
-        judge_reward_traces(
-            traces,
-            client=TruncatedJudgeClient(),
-            attempts=1,
-            retry_delay_seconds=0,
-        )
+    [judged] = judge_reward_traces(
+        traces,
+        client=TruncatedJudgeClient(),
+        attempts=1,
+        retry_delay_seconds=0,
+    )
 
-    message = str(caught.value)
+    message = judged.judge_error
     assert "finish_reason='length'" in message
     assert "response_chars=0" in message
 
 
-def test_judge_reward_traces_expands_budget_after_length_finish():
+def test_judge_reward_traces_moves_to_fallback_after_length_finish():
     class Choice:
         finish_reason = "length"
 
     class RawResponse:
         choices = [Choice()]
 
-    class RecoveringJudgeClient:
+    class TruncatedJudgeClient:
         def __init__(self):
             self.calls = []
 
         async def generate(self, **kwargs):
             self.calls.append(kwargs)
-            if len(self.calls) == 1:
-                return ModelResponse(text="", raw=RawResponse())
+            return ModelResponse(text="", raw=RawResponse())
+
+    class FallbackJudgeClient:
+        def __init__(self):
+            self.calls = []
+
+        async def generate(self, **kwargs):
+            self.calls.append(kwargs)
             return ModelResponse(
                 text='[{"id":"rollout-0","correct":true,"reason":"Matches."}]'
             )
 
     traces = compute_reward_traces([VALID_COMPLETION], ground_truth=["A"])
-    client = RecoveringJudgeClient()
+    client = TruncatedJudgeClient()
+    fallback = FallbackJudgeClient()
 
     [judged] = judge_reward_traces(
         traces,
         client=client,
+        fallback_client=fallback,
         attempts=2,
         retry_delay_seconds=0,
     )
 
-    assert [call["max_tokens"] for call in client.calls] == [8192, 16384]
-    assert client.calls[1]["response_format"] == client.calls[0]["response_format"]
+    assert [call["max_tokens"] for call in client.calls] == [16_384]
+    assert [call["max_tokens"] for call in fallback.calls] == [32_768]
+    assert fallback.calls[0]["response_format"] == client.calls[0]["response_format"]
     assert judged.reward == 1.0
     assert judged.judge_attempts == 2
+
+
+def test_judge_reward_traces_preserves_successes_when_one_item_fails():
+    class PartiallyFailingClient:
+        model = "judge"
+
+        async def generate(self, **kwargs):
+            item_id = json.loads(kwargs["question"].split("\n", 1)[1])[0]["id"]
+            if item_id == "rollout-1":
+                raise RuntimeError("unavailable")
+            return ModelResponse(
+                text=json.dumps(
+                    [{"id": item_id, "correct": True, "reason": "Matches."}]
+                )
+            )
+
+    traces = compute_reward_traces(
+        [VALID_COMPLETION, VALID_COMPLETION],
+        ground_truth=["A", "A"],
+    )
+
+    judged = judge_reward_traces(
+        traces,
+        client=PartiallyFailingClient(),
+        retry_delay_seconds=0,
+    )
+
+    assert judged[0].judge_correct is True
+    assert judged[0].judge_error is None
+    assert judged[0].reward == 1.0
+    assert judged[1].judge_correct is None
+    assert "rollout-1" in judged[1].judge_error
+    assert judged[1].reward == 0.5
 
 
 def test_trainer_uses_remote_judge_verdict_instead_of_local_answer_match(monkeypatch):

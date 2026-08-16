@@ -17,7 +17,7 @@ class Runner:
         tool_registry=None,
         event_handler: Callable[[str, Step, StepOutput | None], None] | None = None,
         artifact_store: ArtifactStore | None = None,
-        max_worker_tokens: int = 4096,
+        max_worker_tokens: int = 16_384,
         worker_temperature: float = 0.2,
     ) -> None:
         if max_worker_tokens <= 0:
@@ -101,6 +101,7 @@ class Runner:
             text=response.text,
             usage=response.usage,
             latency_ms=response.latency_ms,
+            finish_reason=response.finish_reason,
         )
         if self.event_handler:
             self.event_handler("completed", step, output)
