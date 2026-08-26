@@ -86,6 +86,8 @@ class ModelSpec:
     model_idx: int | str | None = None
     name: str | None = None
     context_length: int | None = None
+    max_output_tokens: int | None = None
+    output_budget_observed_tokens: int | None = None
     supports_tools: bool = False
     supports_json: bool = False
     cost_per_1m_input_tokens: float | None = None  # $USD
@@ -97,6 +99,11 @@ class ModelSpec:
     routing_note: str | None = None
 
     def __post_init__(self) -> None:
+        for field_name in ("context_length", "max_output_tokens", "output_budget_observed_tokens"):
+            value = getattr(self, field_name)
+            if value is not None and value <= 0:
+                raise ValueError(f"{field_name} must be positive")
+
         for field_name in ("cost_per_1m_input_tokens", "cost_per_1m_output_tokens"):
             value = getattr(self, field_name)
             if value is not None and value < 0:

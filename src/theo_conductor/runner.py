@@ -45,6 +45,7 @@ class Runner:
         event_handler: Callable[[str, Step, StepOutput | None], None] | None = None,
         artifact_store: ArtifactStore | None = None,
         max_worker_tokens: int | None = None,
+        use_model_output_limits: bool = False,
         worker_temperature: float = 0.2,
     ) -> None:
         if max_worker_tokens is not None and max_worker_tokens <= 0:
@@ -54,6 +55,7 @@ class Runner:
         self.artifact_store = artifact_store
         self.event_handler = event_handler
         self.max_worker_tokens = max_worker_tokens
+        self.use_model_output_limits = use_model_output_limits
         self.worker_temperature = worker_temperature
 
     async def run(self, task: Task) -> RunResult:
@@ -96,11 +98,14 @@ class Runner:
         if self.event_handler:
             self.event_handler("started", step, None)
         spec = self.model_registry.get(step.model_id)
-        # By default, let every worker use the full context window advertised
-        # in the model registry. An explicit limit remains available for runs
-        # that need a smaller, pool-wide generation budget. Keep the historical
-        # fallback for programmatically constructed specs without metadata.
-        max_tokens = self.max_worker_tokens or spec.context_length or 16_384
+        if self.max_worker_tokens is not None:
+            max_tokens = self.max_worker_tokens
+        elif self.use_model_output_limits:
+            max_tokens = spec.max_output_tokens or 16_384
+        else:
+            # Preserve the established full-context behavior outside the HLE
+            # benchmark unless a caller explicitly selects model output limits.
+            max_tokens = spec.context_length or 16_384
 
         context = {key: outputs[key] for key in step.access_list if key in outputs}
         if step.artifact_inputs:

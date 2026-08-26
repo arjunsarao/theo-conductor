@@ -350,7 +350,11 @@ def summarize_records(
 
     models: dict[str, Any] = {}
     for model_id, model_records in grouped.items():
-        outcomes = [bool(record.get("correct", False)) for record in model_records]
+        outcomes = [
+            record["correct"]
+            for record in model_records
+            if isinstance(record.get("correct"), bool)
+        ]
         successes = [record for record in model_records if record.get("error") is None]
         extracted = [record for record in successes if record.get("extracted_answer") is not None]
         subjects: dict[str, Any] = {}
@@ -358,16 +362,22 @@ def summarize_records(
         for record in model_records:
             by_subject[str(record.get("subject") or "unknown")].append(record)
         for subject, subject_records in sorted(by_subject.items()):
-            subject_outcomes = [bool(record.get("correct", False)) for record in subject_records]
+            subject_outcomes = [
+                record["correct"]
+                for record in subject_records
+                if isinstance(record.get("correct"), bool)
+            ]
             subjects[subject] = {
                 "questions": len(subject_records),
+                "judged_questions": len(subject_outcomes),
                 "correct": sum(subject_outcomes),
-                "accuracy": mean(subject_outcomes),
+                "accuracy": mean(subject_outcomes) if subject_outcomes else None,
             }
 
         models[model_id] = {
             "display_name": model_records[0].get("display_name"),
             "questions": len(model_records),
+            "judged_questions": len(outcomes),
             "correct": sum(outcomes),
             "accuracy": mean(outcomes) if outcomes else None,
             "accuracy_95_ci": bootstrap_accuracy_ci(outcomes, samples=bootstrap_samples, seed=seed),

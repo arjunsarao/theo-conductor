@@ -232,6 +232,24 @@ def test_summary_reports_accuracy_failures_usage_and_subjects():
     assert metrics["by_subject"]["physics"]["accuracy"] == 0.5
 
 
+def test_summary_does_not_count_unjudged_records_as_incorrect():
+    metrics = summarize_records(
+        [{
+            "model_id": "solver",
+            "display_name": "Solver",
+            "subject": "physics",
+            "correct": None,
+            "error": None,
+            "extracted_answer": "4",
+        }],
+        bootstrap_samples=10,
+    )["models"]["solver"]
+
+    assert metrics["questions"] == 1
+    assert metrics["judged_questions"] == 0
+    assert metrics["accuracy"] is None
+
+
 def test_oracle_routing_breakdown_splits_ties_between_correct_models():
     records = [
         {"model_id": "a", "display_name": "A", "example_id": "q1", "correct": True},

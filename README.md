@@ -191,6 +191,50 @@ Useful planning overrides include `DATASET_SAMPLES`, `PLAN_CONCURRENCY`,
 manifest. Model and dataset downloads use `~/.cache/huggingface/` by default;
 set `THEO_HF_HOME` to override it.
 
+## End-to-end HLE workflow benchmark
+
+Pregenerated plans can be executed, judged, and summarized as a resumable
+dataset benchmark. Each result records the complete plan and worker outputs,
+the extracted final answer, token usage, configured-price cost estimate,
+workflow latency and peak concurrency, judge verdict, and any item-level
+error. A hash of the plan, worker configuration, and execution settings keeps
+changed runs separate even when they share an output file.
+
+Start with ten workflows using one of the existing complete HLE plan runs:
+
+```bash
+OPENROUTER_API_KEY=... uv run theo-workflow-benchmark \
+  --plans outputs/hle-plans-20484 \
+  --config configs/worker_pool_frontier.yaml \
+  --output-dir outputs/hle-workflow-smoke-10 \
+  --max-samples 10 \
+  --concurrency 2
+```
+
+The default Kimi judge and GLM fallback use `KIMI_API_KEY` and `GLM_API_KEY`.
+Pass `--no-judge` to validate workflow execution before configuring those
+services. Rerunning the same command resumes completed workflows and judge
+verdicts. Increase `--max-samples` to `50`, then `500`. Subsequent 500-item
+shards can use `--offset 500`, `--offset 1000`, and so on; use a distinct
+output directory for each official scored configuration. After fixing a
+transient endpoint or credential failure, add `--retry-failures` to replace
+the latest failed records without repeating successful workflows.
+
+The default uses each model's `max_output_tokens` from the YAML configuration.
+The frontier budgets are grounded in observed maxima from an artificial HLE
+analysis benchmark, with about 20% headroom and upward rounding to 4,096-token
+boundaries: Gemini 12,288; GPT 16,384; Grok 24,576; Kimi 32,768; Claude 40,960;
+DeepSeek 40,960; and GLM 65,536. The GPT and Claude observations are
+closest-family proxies because the benchmark versions differ from the models
+in the frontier pool. Use `--max-worker-tokens N` for one fixed pool-wide cap.
+
+For runs where truncation is less acceptable than potentially extreme cost,
+use `--use-model-context-limit`. Every worker request will then use that
+model's `context_length`. This is the advertised total context limit, not a
+provider-guaranteed output limit: providers may enforce a smaller output cap
+or reject a request when the input plus requested output exceeds the actual
+context window.
+
 The trainable conductor comes from the selected YAML file's top-level
 `conductor_model` field (`Qwen/Qwen2.5-7B` for the small-local config and
 `Qwen/Qwen3.8-27B` for the large-local and frontier configs). Training updates LoRA adapters

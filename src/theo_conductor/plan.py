@@ -184,6 +184,7 @@ async def _generate_one(
         "gold_answer": row.get("answer"),
         "reference_answer": row.get("reference_answer"),
         "answer_type": row.get("answer_type"),
+        "subject": row.get("subject"),
         "rank": 0,
         "batch": dataset_index,
         "sample": 0,

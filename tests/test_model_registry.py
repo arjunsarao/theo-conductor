@@ -14,6 +14,8 @@ models:
     provider: vllm
     display_name: Solver
     context_length: 4096
+    output_budget_observed_tokens: 3000
+    max_output_tokens: 4096
     supports_tools: true
     supports_json: true
     tags:
@@ -31,6 +33,8 @@ models:
 
     assert spec.display_name == "Solver"
     assert spec.context_length == 4096
+    assert spec.output_budget_observed_tokens == 3000
+    assert spec.max_output_tokens == 4096
     assert spec.supports_tools is True
     assert spec.tags == {"local", "physics"}
     assert isinstance(spec.client, OpenAICompatibleClient)
@@ -66,6 +70,11 @@ def test_model_spec_rejects_negative_pricing():
         )
 
 
+def test_model_spec_rejects_nonpositive_output_budget():
+    with pytest.raises(ValueError, match="max_output_tokens must be positive"):
+        ModelSpec(model_idx="invalid", client=object(), max_output_tokens=0)
+
+
 def test_frontier_config_contains_requested_openrouter_models_and_pricing():
     registry = ModelRegistry.from_yaml_file("configs/worker_pool_frontier.yaml")
 
@@ -78,6 +87,18 @@ def test_frontier_config_contains_requested_openrouter_models_and_pricing():
         and registry.get(model_id).cost_per_1m_output_tokens is not None
         for model_id in registry.model_ids()
     )
+    assert {
+        model_id: registry.get(model_id).max_output_tokens
+        for model_id in registry.model_ids()
+    } == {
+        "gpt-5.5": 16_384,
+        "claude-opus-4.8": 40_960,
+        "gemini-3.7-flash": 12_288,
+        "glm-5.3": 65_536,
+        "kimi-k3": 32_768,
+        "deepseek-v4-pro": 40_960,
+        "grok-4.6": 24_576,
+    }
     assert all(
         registry.get(model_id).role
         and registry.get(model_id).best_for

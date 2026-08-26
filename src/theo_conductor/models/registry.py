@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, List
 
@@ -101,6 +102,15 @@ class ModelRegistry:
             raw["routing_note"] = raw.pop("routing_node")
         if client_config is None:
             raise ValueError(f"Model entry in {source} is missing required 'client' config")
+
+        # Keep credentials out of checked-in frontier configs while matching
+        # the access-check script's established OpenRouter environment fallback.
+        if (
+            raw.get("provider") == "openrouter"
+            and "api_key" not in client_config
+            and os.environ.get("OPENROUTER_API_KEY")
+        ):
+            client_config = {**client_config, "api_key": os.environ["OPENROUTER_API_KEY"]}
 
         if "tags" in raw:
             raw["tags"] = set(raw["tags"])
