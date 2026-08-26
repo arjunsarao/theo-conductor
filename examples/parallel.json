@@ -1,37 +1,24 @@
 { 
-  "task_type": "physics_perturbation_theory",
+  "task_type": "physics",
   "difficulty": "medium",
-  "question": "A particle of mass m moves in one dimension under the potential V(x)=\\frac{1}{2} kx^2+\\lambda x^4, where λ is small. Estimate the first-order correction to the ground-state energy of the harmonic oscillator.",
   "workflow": [
   {
     "step_id": "derive",
-    "model_id": 0,
-    "instruction": "Derive the main solution to the problem.",
-    "access_list": ["question"],
-    "needs_tools": false
-
+    "model_id": "gpt-5.5",
+    "instruction": "Derive the first-order ground-state energy correction for the quartically perturbed harmonic oscillator. Express the answer in terms of lambda, hbar, m, and omega, and state the perturbative order retained.",
+    "access_list": ["question"]
   },
   {
-    "step_id": "algebraic_check",
-    "model_id": 1,
-    "instruction": "Check the derivation for algebraic mistakes, missing factors, sign errors, and invalid transformations.",
-    "access_list": ["question", "derive"],
-    "needs_tools": false
-
-  },
-  {
-    "step_id": "units_check",
-    "model_id": 2,
-    "instruction": "Check the derivation using dimensional analysis, limiting cases, physical assumptions, and consistency with known results.",
-    "access_list": ["question", "derive"],
-    "needs_tools": false
+    "step_id": "independent_check",
+    "model_id": "claude-opus-4.8",
+    "instruction": "Independently calculate the same first-order correction from the harmonic-oscillator ground-state moments. Check the numerical factor, dimensions, sign, and lambda-to-zero limit.",
+    "access_list": ["question"]
   },
   {
     "step_id": "final",
-    "model_id": 1,
-    "instruction": "Write the final answer using the derivation and both verifier reports. Resolve any conflicts explicitly.",
-    "access_list": ["question", "derive", "algebraic_check", "units_check"],
-    "needs_tools": false
+    "model_id": "gpt-5.5",
+    "instruction": "Reconcile the two calculations and give the final energy through first order in lambda, including the unperturbed energy and a concise derivation. Do not mention the workflow or intermediate solutions.",
+    "access_list": ["question", "derive", "independent_check"]
   }
   ]
 }

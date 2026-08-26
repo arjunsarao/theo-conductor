@@ -84,9 +84,9 @@ def test_create_task_generates_and_parses_workflow():
     assert response_format["json_schema"]["strict"] is True
     schema = response_format["json_schema"]["schema"]
     assert schema["properties"]["workflow"]["minItems"] == 1
-    assert schema["properties"]["workflow"]["maxItems"] == 5
+    assert schema["properties"]["workflow"]["maxItems"] == 7
     model_id_schema = schema["properties"]["workflow"]["items"]["properties"]["model_id"]
-    assert model_id_schema == {"enum": ["planner"]}
+    assert model_id_schema == {"type": "string", "enum": ["planner"]}
 
 
 def test_main_reports_missing_task(capsys):

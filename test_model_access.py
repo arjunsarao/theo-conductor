@@ -5,14 +5,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
+from dotenv import load_dotenv
 
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -55,9 +58,21 @@ def load_workers(config_path: str | Path) -> list[Worker]:
         display_name = str(entry.get("display_name") or worker_id)
         base_url = str(client.get("base_url") or "").rstrip("/")
         model = str(client.get("model") or "")
-        api_key = str(client.get("api_key", "EMPTY"))
         if not base_url or not model:
             raise ValueError(f"{path}: worker {worker_id!r} needs client.base_url and client.model")
+
+        configured_api_key = client.get("api_key")
+        if configured_api_key is not None and str(configured_api_key).strip():
+            api_key = str(configured_api_key)
+        elif entry.get("provider") == "openrouter" or urlparse(base_url).hostname == "openrouter.ai":
+            api_key = os.environ.get("OPENROUTER_API_KEY", "")
+            if not api_key:
+                raise ValueError(
+                    f"{path}: worker {worker_id!r} uses OpenRouter but "
+                    "OPENROUTER_API_KEY is not set"
+                )
+        else:
+            api_key = "EMPTY"
 
         workers.append(Worker(worker_id, display_name, base_url, model, api_key))
 
@@ -215,6 +230,8 @@ def main() -> int:
     if args.timeout <= 0:
         print("Error: --timeout must be positive", file=sys.stderr)
         return 2
+
+    load_dotenv(REPO_ROOT / ".env")
 
     try:
         workers = load_workers(args.config)

@@ -93,6 +93,35 @@ def test_hle_loader_filters_and_normalizes_physics_adjacent_rows(monkeypatch):
     }
 
 
+def test_hle_all_loader_preserves_non_physics_rows(monkeypatch):
+    raw = Dataset.from_list(
+        [
+            {
+                "id": "1",
+                "question": "Physics question",
+                "answer": "42",
+                "answer_type": "exactMatch",
+                "rationale": "Because physics.",
+                "category": "Physics",
+            },
+            {
+                "id": "2",
+                "question": "History question",
+                "answer": "No",
+                "answer_type": "exactMatch",
+                "rationale": "Because history.",
+                "category": "Humanities/Social Science",
+            },
+        ]
+    )
+    monkeypatch.setattr(data, "load_dataset", lambda *args, **kwargs: raw)
+
+    loaded = data.load_conductor_dataset("hle-all", seed=3)
+
+    assert len(loaded) == 2
+    assert set(loaded["id"]) == {"hle-1", "hle-2"}
+
+
 def test_gpqa_loader_formats_choices_and_preserves_explanation(monkeypatch):
     raw = Dataset.from_list(
         [

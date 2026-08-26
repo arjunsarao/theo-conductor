@@ -93,6 +93,12 @@ class ModelRegistry:
         client_config = raw.pop("client", None)
         # Launcher-only metadata; ModelSpec describes inference capabilities.
         raw.pop("deployment", None)
+        if "routing_node" in raw:
+            if "routing_note" in raw:
+                raise ValueError(
+                    f"Model entry in {source} cannot define both 'routing_node' and 'routing_note'"
+                )
+            raw["routing_note"] = raw.pop("routing_node")
         if client_config is None:
             raise ValueError(f"Model entry in {source} is missing required 'client' config")
 

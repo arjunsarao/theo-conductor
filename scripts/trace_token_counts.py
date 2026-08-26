@@ -16,7 +16,7 @@ from transformers import AutoTokenizer
 
 
 DEFAULT_MODEL = "Qwen/Qwen2.5-7B"
-DEFAULT_LIMIT = 1024
+DEFAULT_LIMIT = 4096
 
 
 def main() -> None:

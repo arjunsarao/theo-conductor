@@ -1,5 +1,8 @@
+import pytest
+
 from theo_conductor.models.openai_compat import OpenAICompatibleClient
 from theo_conductor.models.registry import ModelRegistry
+from theo_conductor.schema import ModelSpec
 
 
 def test_model_registry_loads_models_from_yaml_file(tmp_path):
@@ -32,6 +35,74 @@ models:
     assert spec.tags == {"local", "physics"}
     assert isinstance(spec.client, OpenAICompatibleClient)
     assert spec.client.model == "solver-model"
+
+
+def test_model_registry_loads_pricing_from_yaml_file(tmp_path):
+    config_file = tmp_path / "models.yaml"
+    config_file.write_text(
+        """
+models:
+  - model_idx: priced
+    cost_per_1m_input_tokens: 1.25
+    cost_per_1m_output_tokens: 5.5
+    client:
+      base_url: https://example.test/v1
+      model: priced-model
+""",
+    )
+
+    spec = ModelRegistry.from_yaml_file(config_file).get("priced")
+
+    assert spec.cost_per_1m_input_tokens == 1.25
+    assert spec.cost_per_1m_output_tokens == 5.5
+
+
+def test_model_spec_rejects_negative_pricing():
+    with pytest.raises(ValueError, match="must be non-negative"):
+        ModelSpec(
+            model_idx="invalid",
+            client=object(),
+            cost_per_1m_input_tokens=-1,
+        )
+
+
+def test_frontier_config_contains_requested_openrouter_models_and_pricing():
+    registry = ModelRegistry.from_yaml_file("configs/worker_pool_frontier.yaml")
+
+    assert registry.conductor_model == "Qwen/Qwen3.8-27B"
+    assert {"glm-5.3", "kimi-k3", "deepseek-v4-pro", "grok-4.6"}.issubset(
+        registry.model_ids()
+    )
+    assert all(
+        registry.get(model_id).cost_per_1m_input_tokens is not None
+        and registry.get(model_id).cost_per_1m_output_tokens is not None
+        for model_id in registry.model_ids()
+    )
+    assert all(
+        registry.get(model_id).role
+        and registry.get(model_id).best_for
+        and registry.get(model_id).useful_for
+        and registry.get(model_id).routing_note
+        for model_id in registry.model_ids()
+    )
+
+
+def test_model_registry_accepts_routing_node_alias(tmp_path):
+    config_file = tmp_path / "models.yaml"
+    config_file.write_text(
+        """
+models:
+  - model_idx: solver
+    routing_node: Prefer for final synthesis.
+    client:
+      base_url: http://localhost:8001/v1
+      model: solver-model
+""",
+    )
+
+    spec = ModelRegistry.from_yaml_file(config_file).get("solver")
+
+    assert spec.routing_note == "Prefer for final synthesis."
 
 
 def test_model_registry_loads_conductor_model_from_yaml_file(tmp_path):

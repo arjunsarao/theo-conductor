@@ -55,7 +55,7 @@ with the Qwen conductor tokenizer. For another trace, generate its sidecar:
 ./.venv/bin/python scripts/trace_token_counts.py path/to/trace.jsonl
 ```
 
-The viewer marks completions at or above the configured `1024`-token generation
+The viewer marks completions at or above the configured `4096`-token generation
 cap with `★`. Counts re-tokenize raw completion text and exclude special tokens.
 
 ### Querying traces from Python or a model
@@ -120,7 +120,7 @@ starts, and stops only models marked `deployment.mode: local`; remote workers
 are readiness-checked without being managed by the job.
 
 The direct training CLI uses MegaScience by default; the unified Slurm launcher
-defaults to HLE. Select `megascience`, `hle`, `gpqa`, or the combined
+defaults to HLE. Select `megascience`, `hle`, `hle-all`, `gpqa`, or the combined
 `hle-gpqa` dataset with `DATASET`:
 
 ```bash
@@ -133,9 +133,67 @@ DATASET=hle-gpqa MODEL_CONFIG=configs/worker_pool_large.yaml RUN_MODE=train \
 equivalent direct CLI options are `--dataset`, `--dataset-samples`, and
 `--validation-samples`.
 
+`hle` retains the established physics-adjacent HLE subset. Use `hle-all` when
+the complete HLE test split is required.
+
+## Pregenerating HLE workflows
+
+Workflow planning can run independently from worker execution. The planning
+job loads the conductor once, generates and validates each DAG, and appends one
+resumable JSONL record per HLE ID. It never starts or calls worker models.
+
+For a single GPU job over the complete HLE split:
+
+```bash
+DATASET=hle-all MODEL_CONFIG=configs/worker_pool_frontier.yaml \
+  sbatch scripts/pregenerate_workflows.sbatch
+```
+
+The default output is `outputs/hle-plans-<SLURM ID>/plans.jsonl`, accompanied
+by `manifest.json`, `invalid.jsonl`, and the conductor server log. Re-submitting
+with the same `PLAN_OUTPUT_DIR` skips IDs already recorded. Set
+`PLAN_RETRY_INVALID=1` to retry only failed records.
+
+For ten shards with at most four conductor jobs active at once:
+
+```bash
+PLAN_JOB_ID=$(sbatch --parsable --array=0-9%4 \
+  --export=ALL,DATASET=hle-all,PLAN_SHARDS=10 \
+  scripts/pregenerate_workflows.sbatch)
+
+sbatch --dependency="afterok:${PLAN_JOB_ID}" \
+  --export=ALL,PLAN_JOB_ID="${PLAN_JOB_ID}",PLAN_SHARDS=10 \
+  scripts/merge_workflow_shards.sbatch
+```
+
+The dependent CPU job verifies the shard count and produces the canonical
+`plans.jsonl`. Inspect it without loading any models:
+
+```bash
+uv run theo-plan summary outputs/hle-plans-<SLURM ID>
+uv run theo-plan list outputs/hle-plans-<SLURM ID> --invalid-only
+uv run theo-plan show outputs/hle-plans-<SLURM ID> --id hle-<ID>
+```
+
+The existing viewer discovers merged `outputs/hle-plans-*` runs and renders
+their workflow DAGs alongside GRPO traces:
+
+```bash
+uv run streamlit run trace_viewer.py
+```
+
+Useful planning overrides include `DATASET_SAMPLES`, `PLAN_CONCURRENCY`,
+`PLAN_MAX_TOKENS`, `PLAN_ATTEMPTS`, `PLAN_TEMPERATURE`,
+`CONDUCTOR_SOURCE_MODEL`, `CONDUCTOR_LORA_PATH`, and `PLAN_OUTPUT_DIR`.
+`CONDUCTOR_SOURCE_MODEL` selects the base checkpoint. When
+`CONDUCTOR_LORA_PATH` is set, vLLM serves that adapter under
+`CONDUCTOR_MODEL` (default `theo-conductor`) and records its path in the
+manifest. Model and dataset downloads use `~/.cache/huggingface/` by default;
+set `THEO_HF_HOME` to override it.
+
 The trainable conductor comes from the selected YAML file's top-level
 `conductor_model` field (`Qwen/Qwen2.5-7B` for the small-local config and
-`Qwen/Qwen3.5-27B` for the large-local config). Training updates LoRA adapters
+`Qwen/Qwen3.8-27B` for the large-local and frontier configs). Training updates LoRA adapters
 over all linear layers; use `--lora-rank`, `--lora-alpha`, and
 `--lora-dropout` to tune the adapter, or `--model-name` to override the
 configured base model.
@@ -161,8 +219,9 @@ output tokens. These budgets include the model's reasoning tokens as well as
 its JSON verdict. Judge clients disable
 the OpenAI SDK's internal retries; training traces record the total Kimi and GLM
 attempts used. Remote worker workflows execute with up to 16 rollouts in flight
-and a 16,384-token output ceiling per worker step by default; tune these with
-`--workflow-concurrency` and `--max-worker-tokens`.
+by default. Each worker generation uses that model's configured
+`context_length`; use `--max-worker-tokens` to impose a smaller pool-wide
+ceiling. Tune concurrency with `--workflow-concurrency`.
 
 ## Small-model MegaScience benchmark
 
@@ -260,6 +319,12 @@ launcher uses GPU 0 for PyTorch/LoRA training and starts a dedicated TRL vLLM
 generation server on GPU 1. Generation placement and capacity can be tuned with
 `GENERATION_GPU`, `GENERATION_VLLM_GPU_MEMORY_UTILIZATION`, and
 `GENERATION_VLLM_MAX_MODEL_LEN`.
+
+Worker entries may declare `cost_per_1m_input_tokens` and
+`cost_per_1m_output_tokens` in USD. When an endpoint reports token usage, traces
+include an estimated request cost and the trace viewer reports mean and total
+cost by model. These are configured list-price estimates and do not account for
+provider routing, cache discounts, or tiered pricing.
 
 Benchmark mode uses the same `DATASET` and `VALIDATION_SAMPLES` settings.
 `BENCHMARK_TOTAL_SAMPLES` and `BENCHMARK_VALIDATION_SAMPLES` provide

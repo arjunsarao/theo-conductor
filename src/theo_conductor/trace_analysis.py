@@ -195,6 +195,11 @@ def _worker_performance(records: Sequence[TraceRecord]) -> list[dict[str, Any]]:
             for output in outputs
             if (value := _usage_number(output.get("usage"), "total_tokens")) is not None
         ]
+        estimated_costs = [
+            value
+            for output in outputs
+            if (value := _usage_number(output.get("usage"), "estimated_cost_usd")) is not None
+        ]
         throughput_samples = [
             (completion / latency) * 1000
             for output in outputs
@@ -218,6 +223,8 @@ def _worker_performance(records: Sequence[TraceRecord]) -> list[dict[str, Any]]:
                 "mean_completion_tokens": _mean(completion_tokens),
                 "mean_total_tokens": _mean(total_tokens),
                 "mean_output_tokens_per_second": _mean(throughput_samples),
+                "mean_estimated_cost_usd": _mean(estimated_costs),
+                "total_estimated_cost_usd": sum(estimated_costs) if estimated_costs else None,
             }
         )
     return sorted(rows, key=lambda row: (-row["runs"], row["model_id"]))
@@ -263,6 +270,11 @@ def _conductor_performance(records: Sequence[TraceRecord]) -> list[dict[str, Any
             for _, sample in samples
             if (value := _usage_number(sample["usage"], "total_tokens")) is not None
         ]
+        estimated_costs = [
+            value
+            for _, sample in samples
+            if (value := _usage_number(sample["usage"], "estimated_cost_usd")) is not None
+        ]
 
         # Batch generation latency is repeated on every rollout in that batch.
         # Count it once, and divide the batch's total output tokens by it.
@@ -295,6 +307,8 @@ def _conductor_performance(records: Sequence[TraceRecord]) -> list[dict[str, Any
                 "mean_completion_tokens": _mean(completion_tokens),
                 "mean_total_tokens": _mean(total_tokens),
                 "mean_output_tokens_per_second": _mean(throughput_samples),
+                "mean_estimated_cost_usd": _mean(estimated_costs),
+                "total_estimated_cost_usd": sum(estimated_costs) if estimated_costs else None,
                 "role": "conductor",
                 "latency_basis": "generation batch",
             }
@@ -348,6 +362,11 @@ def _judge_performance(records: Sequence[TraceRecord]) -> list[dict[str, Any]]:
             for sample in samples
             if (value := _usage_number(sample["usage"], "total_tokens")) is not None
         ]
+        estimated_costs = [
+            value
+            for sample in samples
+            if (value := _usage_number(sample["usage"], "estimated_cost_usd")) is not None
+        ]
         throughput_samples = [
             completion * 1000 / latency
             for sample in samples
@@ -371,6 +390,8 @@ def _judge_performance(records: Sequence[TraceRecord]) -> list[dict[str, Any]]:
                 "mean_completion_tokens": _mean(completion_tokens),
                 "mean_total_tokens": _mean(total_tokens),
                 "mean_output_tokens_per_second": _mean(throughput_samples),
+                "mean_estimated_cost_usd": _mean(estimated_costs),
+                "total_estimated_cost_usd": sum(estimated_costs) if estimated_costs else None,
                 "role": "judge",
                 "latency_basis": "request",
             }

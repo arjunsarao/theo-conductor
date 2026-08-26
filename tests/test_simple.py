@@ -144,6 +144,31 @@ def test_runner_applies_worker_decoding_settings(fake_registry):
     assert fake_registry.get(0).client.calls[0]["temperature"] == 0.2
 
 
+def test_runner_uses_each_workers_context_length_as_default_generation_limit():
+    first = FakeModelClient("first")
+    second = FakeModelClient("second")
+    registry = ModelRegistry(
+        [
+            ModelSpec(model_idx="first", client=first, context_length=32_768),
+            ModelSpec(model_idx="second", client=second, context_length=131_072),
+        ]
+    )
+    task = Task(
+        task_type="test",
+        difficulty=Difficulty.EASY,
+        question="Question?",
+        workflow=[
+            Step(step_id="a", model_idx="first", instruction="Do A."),
+            Step(step_id="final", model_idx="second", instruction="Answer.", access_list=["a"]),
+        ],
+    )
+
+    asyncio.run(Runner(registry).run(task))
+
+    assert first.calls[0]["max_tokens"] == 32_768
+    assert second.calls[0]["max_tokens"] == 131_072
+
+
 def test_runner_records_worker_finish_reason():
     class TruncatedClient:
         async def generate(self, **kwargs):
@@ -169,6 +194,34 @@ def test_runner_records_worker_finish_reason():
     result = asyncio.run(Runner(registry).run(task))
 
     assert result.outputs["final"].finish_reason == "length"
+
+
+def test_runner_records_estimated_cost_from_configured_pricing():
+    class UsageClient:
+        async def generate(self, **kwargs):
+            return ModelResponse(
+                text="FINAL: yes",
+                usage={"prompt_tokens": 1_000, "completion_tokens": 500, "total_tokens": 1_500},
+            )
+
+    registry = ModelRegistry([
+        ModelSpec(
+            model_idx="solver",
+            client=UsageClient(),
+            cost_per_1m_input_tokens=2.0,
+            cost_per_1m_output_tokens=6.0,
+        )
+    ])
+    task = Task(
+        task_type="test",
+        difficulty=Difficulty.EASY,
+        question="Question?",
+        workflow=[Step(step_id="final", model_idx="solver", instruction="Answer.")],
+    )
+
+    output = asyncio.run(Runner(registry).run(task)).outputs["final"]
+
+    assert output.usage["estimated_cost_usd"] == pytest.approx(0.005)
 
 
 def test_runner_adds_final_answer_protocol_when_instruction_omits_it(fake_registry):

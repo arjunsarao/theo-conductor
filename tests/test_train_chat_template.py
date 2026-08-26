@@ -82,7 +82,7 @@ def test_prepare_grpo_dataset_adds_prompt_and_reward_columns():
     assert prepared[0]["answer"] == "A"
     assert prepared[0]["answer_type"] == "multipleChoice"
     assert prepared[0]["reference_answer"] == "The sum is four."
-    assert "Output JSON matching this schema" in prepared[0]["prompt"]
+    assert "Return only one valid JSON value matching this schema" in prepared[0]["prompt"]
 
 
 def test_build_training_args_maps_train_config_to_grpo_config():
@@ -133,7 +133,7 @@ def test_vllm_training_uses_json_schema_constrained_decoding():
     registry = ModelRegistry(
         [
             ModelSpec(model_idx="solver", client=FakeModelClient("solver")),
-            ModelSpec(model_idx=7, client=FakeModelClient("critic")),
+            ModelSpec(model_idx="critic", client=FakeModelClient("critic")),
         ]
     )
 
@@ -143,8 +143,8 @@ def test_vllm_training_uses_json_schema_constrained_decoding():
     workflow = schema["properties"]["workflow"]
     model_id = workflow["items"]["properties"]["model_id"]
     assert workflow["minItems"] == 1
-    assert workflow["maxItems"] == 5
-    assert model_id == {"enum": ["solver", 7]}
+    assert workflow["maxItems"] == 7
+    assert model_id == {"type": "string", "enum": ["solver", "critic"]}
 
 
 def test_structural_reward_probe_uses_a_semantically_invalid_workflow():
@@ -207,7 +207,7 @@ def test_paper_training_defaults_map_to_one_iteration_batch():
     assert args.num_generations == 64
     assert args.num_generations_eval == 8
     assert args.generation_batch_size // args.num_generations == 4
-    assert args.max_completion_length == 1024
+    assert args.max_completion_length == 4096
     assert args.temperature == 1.0
     assert args.learning_rate == 1e-6
     assert str(args.lr_scheduler_type) == "SchedulerType.COSINE"
@@ -217,10 +217,14 @@ def test_paper_training_defaults_map_to_one_iteration_batch():
     assert args.epsilon == 0.2
     assert args.beta == 0.0
     assert args.sync_ref_model is False
-    assert config.max_worker_tokens == 16_384
+    assert config.max_worker_tokens is None
     assert config.worker_temperature == 0.2
     assert config.workflow_concurrency == 16
     assert config.execute_workflows is False
+    assert args.save_steps == 1
+    assert args.save_total_limit == 2
+    assert args.metric_for_best_model == "reward"
+    assert args.greater_is_better is True
 
 
 def test_conductor_model_resolves_from_config_unless_overridden():
@@ -272,7 +276,7 @@ def test_cli_resolves_large_local_conductor_from_config(monkeypatch):
         ["train", "--config-path", "configs/worker_pool_large.yaml"],
     )
 
-    assert parse_args().model_name == "Qwen/Qwen3.5-27B"
+    assert parse_args().model_name == "Qwen/Qwen3.8-27B"
 
 
 def test_training_dataset_is_selectable_from_cli(monkeypatch):

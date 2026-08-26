@@ -2,12 +2,39 @@ import asyncio
 from collections.abc import Callable
 import json
 import time
+from typing import Any
 
 from .artifact import ArtifactStore
 from .scheduler import topological_sort
-from .schema import Task, RunResult, StepOutput, Step
+from .schema import ModelSpec, Task, RunResult, StepOutput, Step
 from .models.registry import ModelRegistry
 from .validate import validate_task
+
+
+def _usage_with_estimated_cost(
+    response_usage: dict[str, Any] | None,
+    spec: ModelSpec,
+) -> dict[str, Any] | None:
+    """Copy token usage and add the configured list-price estimate when possible."""
+    if not isinstance(response_usage, dict):
+        return response_usage
+    usage = dict(response_usage)
+    prompt_tokens = usage.get("prompt_tokens", usage.get("input_tokens"))
+    completion_tokens = usage.get("completion_tokens", usage.get("output_tokens"))
+    if (
+        prompt_tokens is not None
+        and completion_tokens is not None
+        and spec.cost_per_1m_input_tokens is not None
+        and spec.cost_per_1m_output_tokens is not None
+    ):
+        try:
+            usage["estimated_cost_usd"] = (
+                float(prompt_tokens) * spec.cost_per_1m_input_tokens
+                + float(completion_tokens) * spec.cost_per_1m_output_tokens
+            ) / 1_000_000
+        except (TypeError, ValueError):
+            pass
+    return usage
 
 
 class Runner:
@@ -17,10 +44,10 @@ class Runner:
         tool_registry=None,
         event_handler: Callable[[str, Step, StepOutput | None], None] | None = None,
         artifact_store: ArtifactStore | None = None,
-        max_worker_tokens: int = 16_384,
+        max_worker_tokens: int | None = None,
         worker_temperature: float = 0.2,
     ) -> None:
-        if max_worker_tokens <= 0:
+        if max_worker_tokens is not None and max_worker_tokens <= 0:
             raise ValueError("max_worker_tokens must be positive")
         self.model_registry = model_registry
         self.tool_registry = tool_registry
@@ -69,6 +96,11 @@ class Runner:
         if self.event_handler:
             self.event_handler("started", step, None)
         spec = self.model_registry.get(step.model_id)
+        # By default, let every worker use the full context window advertised
+        # in the model registry. An explicit limit remains available for runs
+        # that need a smaller, pool-wide generation budget. Keep the historical
+        # fallback for programmatically constructed specs without metadata.
+        max_tokens = self.max_worker_tokens or spec.context_length or 16_384
 
         context = {key: outputs[key] for key in step.access_list if key in outputs}
         if step.artifact_inputs:
@@ -91,7 +123,7 @@ class Runner:
             instruction=instruction,
             question=task.question,
             context=context,
-            max_tokens=self.max_worker_tokens,
+            max_tokens=max_tokens,
             temperature=self.worker_temperature,
         )
 
@@ -99,7 +131,7 @@ class Runner:
             step_id=step.step_id,
             model_id=step.model_id,
             text=response.text,
-            usage=response.usage,
+            usage=_usage_with_estimated_cost(response.usage, spec),
             latency_ms=response.latency_ms,
             finish_reason=response.finish_reason,
         )

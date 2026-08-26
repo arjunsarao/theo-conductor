@@ -1,25 +1,23 @@
 {
-  "task_type": "physics_perturbation_theory",
+  "task_type": "physics",
   "difficulty": "medium",
-  "question": "A particle of mass m moves in one dimension under the potential V(x)=\\frac{1}{2} kx^2+\\lambda x^4, where λ is small. Estimate the first-order correction to the ground-state energy of the harmonic oscillator.",
-  "needs_tools": false,
   "workflow": [
     {
       "step_id": "derive",
-      "model_id": 2,
-      "instruction": "Derive the first-order perturbative correction carefully.",
+      "model_id": "deepseek-v4-pro",
+      "instruction": "Derive the first-order ground-state correction for the quartic perturbation from the unperturbed oscillator wavefunction or ladder operators. Keep lambda, hbar, m, and omega explicit and provide the expectation value needed by the next step.",
       "access_list": ["question"]
     },
     {
       "step_id": "verify_constants",
-      "model_id": 1,
-      "instruction": "Check expectation values, dimensions, and numerical factors.",
+      "model_id": "claude-opus-4.8",
+      "instruction": "Audit derive for the harmonic-oscillator moment, numerical coefficient, dimensions, sign, and perturbative order. Return a corrected expression with a short justification if any issue is found.",
       "access_list": ["question", "derive"]
     },
     {
       "step_id": "final",
-      "model_id": 0,
-      "instruction": "Produce the final answer using only verified claims.",
+      "model_id": "gpt-5.5",
+      "instruction": "Use the derivation and audit to answer the original question directly, giving the ground-state energy through first order in lambda and identifying the neglected order. Do not mention the workflow or intermediate workers.",
       "access_list": ["question", "derive", "verify_constants"]
     }
   ]

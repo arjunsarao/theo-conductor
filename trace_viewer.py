@@ -359,26 +359,39 @@ def gpu_pressure_statistics(
     )
 
 
-def selected_dataset() -> tuple[TraceDataset, str]:
-    traces: dict[int, Path] = {}
-    for output_dir in (ROOT / "outputs").glob("grpo-*"):
+def discover_trace_runs(root: Path = ROOT) -> dict[str, Path]:
+    """Discover both GRPO traces and frozen planning-only workflow runs."""
+    traces: dict[str, Path] = {}
+    for output_dir in (root / "outputs").glob("grpo-*"):
         job_id = output_dir.name.removeprefix("grpo-")
         path = output_dir / "traces" / TRACE_FILENAME
         if job_id.isdigit() and path.is_file():
-            traces[int(job_id)] = path
+            traces[f"GRPO {job_id}"] = path
+    for output_dir in (root / "outputs").glob("hle-plans-*"):
+        run_id = output_dir.name.removeprefix("hle-plans-")
+        path = output_dir / "plans.jsonl"
+        if path.is_file():
+            traces[f"HLE plans {run_id}"] = path
+    return traces
+
+
+def selected_dataset() -> tuple[TraceDataset, str]:
+    traces = discover_trace_runs()
 
     if not traces:
-        st.info(f"No SLURM traces found at outputs/grpo-<SLURM ID>/traces/{TRACE_FILENAME}.")
+        st.info(
+            "No runs found under outputs/grpo-*/traces or outputs/hle-plans-*/plans.jsonl."
+        )
         st.stop()
 
-    job_ids = sorted(traces, reverse=True)
-    latest_job_id = job_ids[0]
-    job_id = st.sidebar.selectbox(
-        "SLURM ID",
-        job_ids,
-        format_func=lambda value: f"{value} (latest)" if value == latest_job_id else str(value),
+    run_names = sorted(traces, key=lambda name: traces[name].stat().st_mtime_ns, reverse=True)
+    latest_run = run_names[0]
+    run_name = st.sidebar.selectbox(
+        "Run",
+        run_names,
+        format_func=lambda value: f"{value} (latest)" if value == latest_run else value,
     )
-    path = traces[job_id]
+    path = traces[run_name]
     return load_path(str(path), path.stat().st_mtime_ns), str(path.relative_to(ROOT))
 
 
@@ -532,6 +545,8 @@ def render_overview(dataset: TraceDataset, error_styles: dict[str, tuple[str, st
                 "Mean output tokens": row["mean_completion_tokens"],
                 "Mean total tokens": row["mean_total_tokens"],
                 "Output tokens/s": row["mean_output_tokens_per_second"],
+                "Mean cost (USD)": row.get("mean_estimated_cost_usd"),
+                "Total cost (USD)": row.get("total_estimated_cost_usd"),
             }
             for row in performance_rows
         ]
@@ -551,6 +566,8 @@ def render_overview(dataset: TraceDataset, error_styles: dict[str, tuple[str, st
                 "Mean output tokens": st.column_config.NumberColumn(format="%.1f"),
                 "Mean total tokens": st.column_config.NumberColumn(format="%.1f"),
                 "Output tokens/s": st.column_config.NumberColumn(format="%.1f"),
+                "Mean cost (USD)": st.column_config.NumberColumn(format="$%.6f"),
+                "Total cost (USD)": st.column_config.NumberColumn(format="$%.4f"),
             },
         )
         st.caption(
@@ -1097,6 +1114,8 @@ def render_record(record: TraceRecord, error_styles: dict[str, tuple[str, str]])
                     metadata.append(f'{float(output["latency_ms"]):.0f} ms')
                 if usage.get("total_tokens") is not None:
                     metadata.append(f'{int(usage["total_tokens"]):,} total tokens')
+                if usage.get("estimated_cost_usd") is not None:
+                    metadata.append(f'${float(usage["estimated_cost_usd"]):.6f} estimated cost')
                 if metadata:
                     st.caption(" · ".join(metadata))
                 st.code(output.get("text") or json.dumps(output, indent=2, ensure_ascii=False))

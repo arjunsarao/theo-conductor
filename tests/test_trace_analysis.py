@@ -32,7 +32,12 @@ def _write_trace(tmp_path):
                 "model_id": "solver",
                 "text": "FINAL: yes",
                 "latency_ms": 2000,
-                "usage": {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30},
+                "usage": {
+                    "prompt_tokens": 20,
+                    "completion_tokens": 10,
+                    "total_tokens": 30,
+                    "estimated_cost_usd": 0.002,
+                },
             }}, "error": None, "final_answer": "yes",
         },
     ]
@@ -73,6 +78,8 @@ def test_dataset_summary_and_filtering(tmp_path):
         "mean_completion_tokens": 10,
         "mean_total_tokens": 30,
         "mean_output_tokens_per_second": 5,
+        "mean_estimated_cost_usd": 0.002,
+        "total_estimated_cost_usd": 0.002,
     }]
     assert summary["worker_timing"]["calls"] == 1
     assert summary["worker_timing"]["estimated_workflow_latency_ms"] == 2000

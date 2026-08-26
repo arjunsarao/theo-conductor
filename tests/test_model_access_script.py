@@ -41,6 +41,69 @@ def test_large_pool_defines_the_three_expected_workers():
     assert all(worker.base_url and worker.model for worker in workers)
 
 
+def test_load_workers_uses_openrouter_key_from_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-secret")
+    config = tmp_path / "workers.yaml"
+    config.write_text(
+        """
+models:
+  - model_idx: openrouter-worker
+    provider: openrouter
+    client:
+      base_url: https://openrouter.ai/api/v1
+      model: example/model
+""",
+        encoding="utf-8",
+    )
+
+    assert load_workers(config) == [
+        Worker(
+            "openrouter-worker",
+            "openrouter-worker",
+            "https://openrouter.ai/api/v1",
+            "example/model",
+            "openrouter-secret",
+        )
+    ]
+
+
+def test_load_workers_prefers_explicit_key_over_openrouter_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "environment-secret")
+    config = tmp_path / "workers.yaml"
+    config.write_text(
+        """
+models:
+  - model_idx: openrouter-worker
+    provider: openrouter
+    client:
+      base_url: https://openrouter.ai/api/v1
+      model: example/model
+      api_key: explicit-secret
+""",
+        encoding="utf-8",
+    )
+
+    assert load_workers(config)[0].api_key == "explicit-secret"
+
+
+def test_load_workers_requires_key_for_openrouter(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    config = tmp_path / "workers.yaml"
+    config.write_text(
+        """
+models:
+  - model_idx: openrouter-worker
+    client:
+      base_url: https://openrouter.ai/api/v1
+      model: example/model
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="OPENROUTER_API_KEY is not set"):
+        load_workers(config)
+
+
 def test_completion_parts_reads_reasoning_and_answer():
     payload = {
         "choices": [

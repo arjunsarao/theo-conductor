@@ -16,7 +16,7 @@ PHYSICS_ADJACENT_DOMAINS = {
 
 MEGASCIENCE_DATASET_ID = "MegaScience/MegaScience"
 DEFAULT_MEGASCIENCE_SAMPLES = 2_000
-TRAINING_DATASETS = ("megascience", "hle", "gpqa", "hle-gpqa")
+TRAINING_DATASETS = ("megascience", "hle", "hle-all", "gpqa", "hle-gpqa")
 
 
 def format_mcq_batch(examples, seed=42):
@@ -61,9 +61,11 @@ def is_physics_adjacent_domain(value: str | None) -> bool:
     return value in PHYSICS_ADJACENT_DOMAINS
 
 
-def load_hle_physics_dataset():
+def load_hle_dataset(*, physics_only: bool = True):
     hle = load_dataset("cais/hle", split="test", token=os.getenv("HF_TOKEN"))
-    return hle.filter(lambda ex: is_physics_adjacent_domain(ex.get("category"))).map(
+    if physics_only:
+        hle = hle.filter(lambda ex: is_physics_adjacent_domain(ex.get("category")))
+    return hle.map(
         lambda ex: {
             "id": f"hle-{ex['id']}",
             "reference_answer": ex.get("rationale"),
@@ -73,6 +75,11 @@ def load_hle_physics_dataset():
     ).select_columns(
         ["id", "question", "answer", "answer_type", "reference_answer", "subject"]
     )
+
+
+def load_hle_physics_dataset():
+    """Load the established physics-adjacent HLE subset."""
+    return load_hle_dataset(physics_only=True)
 
 
 def load_gpqa_physics_dataset(seed=42):
@@ -190,6 +197,8 @@ def load_conductor_dataset(
         return load_megascience_dataset(seed=seed, max_samples=limit)
     if dataset_name == "hle":
         dataset = load_hle_physics_dataset()
+    elif dataset_name == "hle-all":
+        dataset = load_hle_dataset(physics_only=False)
     elif dataset_name == "gpqa":
         dataset = load_gpqa_physics_dataset(seed=seed)
     else:

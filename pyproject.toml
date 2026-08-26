@@ -26,6 +26,7 @@ dependencies = [
 ]
 
 [project.scripts]
+theo-plan = "theo_conductor.plan:main"
 theo-trace = "theo_conductor.trace_analysis:main"
 theo-benchmark = "theo_conductor.benchmark:main"
 

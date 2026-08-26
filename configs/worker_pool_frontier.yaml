@@ -1,3 +1,6 @@
+conductor_model: Qwen/Qwen3.8-27B
+train_gpu_set: "0"
+
 models:
   - model_idx: gpt-5.5
     provider: openrouter
@@ -6,13 +9,12 @@ models:
     context_length: 1000000
     supports_tools: true
     supports_json: true
-    cost_per_1m_input_tokens: null
-    cost_per_1m_output_tokens: null
-    tags:
-      - frontier
-      - closed
-      - reasoning
-      - coding
+    cost_per_1m_input_tokens: 5.0
+    cost_per_1m_output_tokens: 30.0
+    role: "premium general-purpose reasoner"
+    best_for: "The hardest multidisciplinary questions; difficult scientific or mathematical reasoning; high-stakes final synthesis; resolving problems where correctness is more important than cost."
+    useful_for: "Independent primary solutions, difficult adjudication, complex coding, and synthesizing several technical analyses."
+    routing_note: "Prefer for especially difficult or ambiguous subtasks. Avoid spending it on routine decomposition, simple checks, or redundant candidates that a less expensive model can handle."
     client:
       type: openai_compatible
       base_url: https://openrouter.ai/api/v1
@@ -25,33 +27,103 @@ models:
     context_length: 1000000
     supports_tools: true
     supports_json: true
-    cost_per_1m_input_tokens: null
-    cost_per_1m_output_tokens: null
-    tags:
-      - frontier
-      - closed
-      - reasoning
-      - coding
+    cost_per_1m_input_tokens: 5.0
+    cost_per_1m_output_tokens: 25.0
+    role: "critical analyst and long-context synthesizer"
+    best_for: "Careful interpretation of ambiguous questions; finding unsupported assumptions; critiquing candidate solutions; reconciling conflicting analyses; producing coherent, precise final responses."
+    useful_for: "Long-context analysis, technical writing, difficult reasoning, coding, and adjudication where judgment and self-critique are important."
+    routing_note: "Prefer as an adjudicator or synthesizer when candidate solutions may contain subtle conceptual errors. Avoid using solely for mechanical calculations or routine verification."
     client:
       type: openai_compatible
       base_url: https://openrouter.ai/api/v1
       model: anthropic/claude-opus-4.8
 
-  - model_idx: gemini-3.1-pro
+  - model_idx: gemini-3.7-flash
     provider: openrouter
-    display_name: Gemini 3.1 Pro
-    name: gemini-3.1-pro
+    display_name: Gemini 3.7 Flash
+    name: gemini-3.7-flash
     context_length: 1000000
     supports_tools: true
     supports_json: true
-    cost_per_1m_input_tokens: null
-    cost_per_1m_output_tokens: null
-    tags:
-      - frontier
-      - closed
-      - reasoning
-      - multimodal
+    cost_per_1m_input_tokens: 2.0
+    cost_per_1m_output_tokens: 12.0
+    role: "fast, cost-efficient multimodal generalist"
+    best_for: "Rapid independent analyses; parallel candidate solutions; multimodal or spatial questions; coding and agentic tasks where latency and cost matter."
+    useful_for: "Medium-difficulty reasoning, extracting structure from long inputs, visual interpretation, targeted checks, and inexpensive exploratory solutions."
+    routing_note: "Prefer when several independent subtasks can be explored in parallel or when visual/spatial input matters. For unusually delicate derivations, pair its work with verification or use a premium reasoner."
     client:
       type: openai_compatible
       base_url: https://openrouter.ai/api/v1
-      model: google/gemini-3.1-pro
+      model: google/gemini-3.7-flash
+
+  - model_idx: glm-5.3
+    provider: openrouter
+    display_name: GLM 5.3
+    name: glm-5.3
+    context_length: 1048576
+    supports_tools: true
+    supports_json: true
+    cost_per_1m_input_tokens: 1.4
+    cost_per_1m_output_tokens: 4.4
+    role: "cost-efficient coding and agentic-workflow specialist"
+    best_for: "Complex programming; implementation planning; debugging; algorithmic tasks; long-horizon software-engineering work; reasoning about executable procedures."
+    useful_for: "Producing computational approaches, checking algorithms, translating mathematical procedures into code, and handling technical subtasks with clear success criteria."
+    routing_note: "Prefer over premium generalists for coding-heavy or implementation-heavy subtasks. Its documented differentiation is strongest in software engineering, so do not assume it is the best choice for every purely theoretical science question."
+    client:
+      type: openai_compatible
+      base_url: https://openrouter.ai/api/v1
+      model: z-ai/glm-5.3
+
+  - model_idx: kimi-k3
+    provider: openrouter
+    display_name: Kimi K3
+    name: kimi-k3
+    context_length: 1048576
+    supports_tools: true
+    supports_json: true
+    cost_per_1m_input_tokens: 3.0
+    cost_per_1m_output_tokens: 15.0
+    role: "long-context knowledge-work and engineering specialist"
+    best_for: "Sustained analysis over very large contexts; understanding large bodies of technical material; repository-scale coding; long-horizon engineering and knowledge-work tasks."
+    useful_for: "Integrating many pieces of evidence, analyzing lengthy problem statements or intermediate results, producing an independent technical solution, and handling tasks that require sustained attention."
+    routing_note: "Prefer when context volume or long-horizon coherence is central. Give explicit boundaries and a precise deliverable because the model may otherwise take an expansive approach."
+    client:
+      type: openai_compatible
+      base_url: https://openrouter.ai/api/v1
+      model: moonshotai/kimi-k3
+
+  - model_idx: deepseek-v4-pro
+    provider: openrouter
+    display_name: DeepSeek V4 Pro 0813
+    name: deepseek-v4-pro
+    context_length: 1048576
+    supports_tools: true
+    supports_json: true
+    cost_per_1m_input_tokens: 1.122
+    cost_per_1m_output_tokens: 3.366
+    role: "low-cost general reasoner and technical worker"
+    best_for: "General reasoning, technical derivations, coding, agentic tasks, and independent candidate solutions when many worker calls are needed."
+    useful_for: "Parallel scientific analyses, computation-oriented reasoning, targeted verification, algorithm design, and economical first-pass solutions."
+    routing_note: "Prefer when a capable general-purpose solution is needed at low cost, especially for parallel candidates. Escalate to a premium model when the problem contains unresolved ambiguity or requires especially reliable final adjudication."
+    client:
+      type: openai_compatible
+      base_url: https://openrouter.ai/api/v1
+      model: deepseek/deepseek-v4-pro-0813
+
+  - model_idx: grok-4.6
+    provider: openrouter
+    display_name: Grok 4.6
+    name: grok-4.6
+    context_length: 500000
+    supports_tools: true
+    supports_json: true
+    cost_per_1m_input_tokens: 2.0
+    cost_per_1m_output_tokens: 6.0
+    role: "STEM-oriented agentic and multimodal reasoner"
+    best_for: "Scientific and technical reasoning; coding; visual or interactive problems; ambitious multi-step tasks; independent analysis that benefits from a different reasoning perspective."
+    useful_for: "Physics and mathematics candidate solutions, engineering reasoning, visual interpretation, coding, targeted technical verification, and long-running agentic work."
+    routing_note: "Prefer as an independent STEM solver or technical verifier, particularly when diversity from the other worker families is valuable. Do not exclude it merely because another model is a more common default."
+    client:
+      type: openai_compatible
+      base_url: https://openrouter.ai/api/v1
+      model: x-ai/grok-4.6

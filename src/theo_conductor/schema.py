@@ -91,3 +91,18 @@ class ModelSpec:
     cost_per_1m_input_tokens: float | None = None  # $USD
     cost_per_1m_output_tokens: float | None = None  # $USD
     tags: Set[str] = field(default_factory=set)
+    role: str | None = None
+    best_for: str | None = None
+    useful_for: str | None = None
+    routing_note: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in ("cost_per_1m_input_tokens", "cost_per_1m_output_tokens"):
+            value = getattr(self, field_name)
+            if value is not None and value < 0:
+                raise ValueError(f"{field_name} must be non-negative")
+
+        for field_name in ("role", "best_for", "useful_for", "routing_note"):
+            value = getattr(self, field_name)
+            if value is not None and not value.strip():
+                raise ValueError(f"{field_name} must be non-empty when provided")

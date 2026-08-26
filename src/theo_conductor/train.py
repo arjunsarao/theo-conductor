@@ -70,8 +70,8 @@ class TrainConfig:
     num_generations: int = 64
     num_generations_eval: int = 8
     generation_batch_size: int = 256
-    max_completion_length: int = 1024
-    max_worker_tokens: int = 16_384
+    max_completion_length: int = 4096
+    max_worker_tokens: int | None = None
     worker_temperature: float = 0.2
     workflow_concurrency: int = 16
     max_context_length: int | None = None
@@ -266,7 +266,13 @@ def build_training_args(
         # batch to avoid a multi-tens-of-GiB temporary allocation.
         per_device_eval_batch_size=config.per_device_eval_batch_size,
         save_strategy="steps",
-        save_steps=1 if config.preflight else 500,
+        # A GRPO iteration is one optimizer step. Save its PEFT adapter after
+        # every iteration, while checkpoint rotation retains the best
+        # evaluation checkpoint and the latest checkpoint.
+        save_steps=1,
+        save_total_limit=2,
+        metric_for_best_model="reward",
+        greater_is_better=True,
         remove_unused_columns=False,
     )
     if config.use_vllm:
@@ -681,14 +687,16 @@ def parse_args() -> TrainConfig:
         "--max-completion-length",
         dest="max_completion_length",
         type=int,
-        default=1024,
-        help="Maximum generated tokens for the trainable conductor model (default: 1024).",
+        default=4096,
+        help="Maximum generated tokens for the trainable conductor model (default: 4096).",
     )
     parser.add_argument(
         "--max-worker-tokens",
         type=int,
-        default=16_384,
-        help="Maximum generated tokens for each worker-model workflow step (default: 16384).",
+        help=(
+            "Optional pool-wide output-token cap for worker workflow steps. "
+            "By default each worker uses its context_length from the model config."
+        ),
     )
     parser.add_argument(
         "--worker-temperature",
