@@ -97,6 +97,22 @@ class Runner:
     async def run_step(self, step: Step, task: Task, outputs: dict[str, StepOutput]) -> StepOutput:
         if self.event_handler:
             self.event_handler("started", step, None)
+        spec, request = self.prepare_step(step, task, outputs)
+        response = await spec.client.generate(**request)
+        return self.complete_step(step, spec, response)
+
+    def prepare_step(
+        self,
+        step: Step,
+        task: Task,
+        outputs: dict[str, StepOutput],
+    ) -> tuple[ModelSpec, dict[str, Any]]:
+        """Build one worker request without sending it.
+
+        Separating request preparation from execution lets the benchmark pool
+        ready steps from many workflows into provider-native batch jobs while
+        preserving the exact prompt contract used by ordinary Runner calls.
+        """
         spec = self.model_registry.get(step.model_id)
         if self.max_worker_tokens is not None:
             max_tokens = self.max_worker_tokens
@@ -124,14 +140,16 @@ class Runner:
         if step.step_id == task.workflow[-1].step_id and "final:" not in instruction.lower():
             instruction = f"{instruction.rstrip()}\n\nEnd with a separate line exactly formatted as FINAL: <answer>."
 
-        response = await spec.client.generate(
-            instruction=instruction,
-            question=task.question,
-            context=context,
-            max_tokens=max_tokens,
-            temperature=self.worker_temperature,
-        )
+        return spec, {
+            "instruction": instruction,
+            "question": task.question,
+            "context": context,
+            "max_tokens": max_tokens,
+            "temperature": self.worker_temperature,
+        }
 
+    def complete_step(self, step: Step, spec: ModelSpec, response: Any) -> StepOutput:
+        """Convert a client response into the established worker output."""
         output = StepOutput(
             step_id=step.step_id,
             model_id=step.model_id,

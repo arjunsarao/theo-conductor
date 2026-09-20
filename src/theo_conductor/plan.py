@@ -19,7 +19,15 @@ from .scheduler import topological_sort
 
 
 PLAN_FILENAME = "plans.jsonl"
-PLAN_DATASETS = ("megascience", "hle", "hle-all", "gpqa", "hle-gpqa")
+PLAN_DATASETS = (
+    "megascience",
+    "hle",
+    "hle-physics-text",
+    "hle-text",
+    "hle-all",
+    "gpqa",
+    "hle-gpqa",
+)
 
 
 def _utc_now() -> str:
@@ -154,7 +162,8 @@ async def _generate_one(
             async with semaphore:
                 response = await client.generate(
                     instruction=prompt,
-                    question=question,
+                    # The conductor prompt already ends with the complete query.
+                    question="",
                     context={},
                     max_tokens=max_tokens,
                     temperature=temperature,
@@ -185,6 +194,7 @@ async def _generate_one(
         "reference_answer": row.get("reference_answer"),
         "answer_type": row.get("answer_type"),
         "subject": row.get("subject"),
+        "is_multimodal": bool(row.get("is_multimodal", False)),
         "rank": 0,
         "batch": dataset_index,
         "sample": 0,
@@ -270,6 +280,14 @@ async def generate_plans(
             stream.flush()
             generated += 1
             failed += int(bool(record.get("error")))
+            if record.get("error"):
+                print(
+                    f"[plan error] id={record['dataset_id']} "
+                    f"index={record['dataset_index']} attempt={record['attempt']} "
+                    f"type={record['error_type']}: {record['error']}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             if generated % 25 == 0 or generated == len(tasks):
                 print(
                     f"planned={generated}/{len(tasks)} failed={failed} resumed={len(completed)}",
@@ -334,7 +352,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     generate = subparsers.add_parser("generate", help="Generate resumable workflows without executing workers")
-    generate.add_argument("--dataset", choices=PLAN_DATASETS, default="hle-all")
+    generate.add_argument("--dataset", choices=PLAN_DATASETS, default="hle-text")
     generate.add_argument("--config", type=Path, required=True)
     generate.add_argument("--output-dir", type=Path, required=True)
     generate.add_argument("--conductor-base-url", default=os.getenv("CONDUCTOR_BASE_URL", "http://127.0.0.1:8007/v1"))

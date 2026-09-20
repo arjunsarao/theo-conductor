@@ -1,0 +1,32 @@
+models:
+  - model_idx: gpt-5.5
+    provider: openrouter
+    display_name: GPT-5.5
+    name: gpt-5.5
+    context_length: 1000000
+    output_budget_observed_tokens: 13000
+    max_output_tokens: 32768
+    supports_tools: true
+    supports_json: true
+    cost_per_1m_input_tokens: 5.0
+    cost_per_1m_output_tokens: 30.0
+    client:
+      type: openai_compatible
+      base_url: https://openrouter.ai/api/v1
+      model: openai/gpt-5.5
+
+  - model_idx: claude-opus-4.8
+    provider: openrouter
+    display_name: Claude Opus 4.8
+    name: claude-opus-4.8
+    context_length: 1000000
+    output_budget_observed_tokens: 33000
+    max_output_tokens: 65536
+    supports_tools: true
+    supports_json: true
+    cost_per_1m_input_tokens: 5.0
+    cost_per_1m_output_tokens: 25.0
+    client:
+      type: openai_compatible
+      base_url: https://openrouter.ai/api/v1
+      model: anthropic/claude-opus-4.8

@@ -9,12 +9,14 @@
 #SBATCH --gres=gpu:1
 #SBATCH --output=slurm_logs/%x-%A_%a.out
 #SBATCH --error=slurm_logs/%x-%A_%a.err
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=arjun@firstprinciples.com
 
 set -Eeuo pipefail
 
 REPO_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 CONFIG="${MODEL_CONFIG:-${REPO_ROOT}/configs/worker_pool_frontier.yaml}"
-DATASET="${DATASET:-hle-all}"
+DATASET="${DATASET:-hle-text}"
 PLAN_SHARDS="${PLAN_SHARDS:-${SLURM_ARRAY_TASK_COUNT:-1}}"
 SHARD_INDEX="${SLURM_ARRAY_TASK_ID:-0}"
 PLAN_RUN_ID="${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID:-manual}}"
@@ -25,9 +27,12 @@ CONDUCTOR_READY_TIMEOUT="${CONDUCTOR_READY_TIMEOUT:-1800}"
 CONDUCTOR_GPU_MEMORY_UTILIZATION="${CONDUCTOR_GPU_MEMORY_UTILIZATION:-0.90}"
 CONDUCTOR_MAX_MODEL_LEN="${CONDUCTOR_MAX_MODEL_LEN:-16384}"
 PLAN_CONCURRENCY="${PLAN_CONCURRENCY:-16}"
-PLAN_MAX_TOKENS="${PLAN_MAX_TOKENS:-2048}"
+# Leave headroom for unusually long questions at the configured model context limit.
+PLAN_MAX_TOKENS="${PLAN_MAX_TOKENS:-2000}"
 PLAN_ATTEMPTS="${PLAN_ATTEMPTS:-2}"
 PLAN_TEMPERATURE="${PLAN_TEMPERATURE:-0.1}"
+PLAN_ROLLOUTS="${PLAN_ROLLOUTS:-1}"
+[[ "$PLAN_ROLLOUTS" =~ ^[1-9][0-9]*$ ]] || { echo "PLAN_ROLLOUTS must be a positive integer" >&2; exit 2; }
 USER_HF_HOME="${THEO_HF_HOME:-${HOME}/.cache/huggingface}"
 
 export HF_HOME="$USER_HF_HOME"
@@ -115,7 +120,6 @@ args=(
   generate
   --dataset "$DATASET"
   --config "$CONFIG"
-  --output-dir "$OUTPUT_DIR"
   --conductor-base-url "http://${CONDUCTOR_HOST}:${CONDUCTOR_PORT}/v1"
   --conductor-model "$CONDUCTOR_MODEL"
   --conductor-source "${CONDUCTOR_LORA_PATH:-$CONDUCTOR_SOURCE_MODEL}"
@@ -130,7 +134,17 @@ args=(
 [[ -n "${DATASET_SAMPLES:-}" ]] && args+=(--max-samples "$DATASET_SAMPLES")
 [[ "${PLAN_RETRY_INVALID:-0}" == "1" ]] && args+=(--retry-invalid)
 
-PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
-  python -m theo_conductor.plan "${args[@]}"
+# Keep one conductor server alive across all rollouts. Separate directories
+# prevent question-ID resume logic from skipping later samples. Keep the
+# dataset seed fixed so every rollout sees exactly the same question subset.
+for ((rollout = 0; rollout < PLAN_ROLLOUTS; rollout++)); do
+  rollout_dir="$OUTPUT_DIR"
+  if (( PLAN_ROLLOUTS > 1 )); then
+    rollout_dir="${OUTPUT_DIR}/rollout-$(printf '%03d' "$rollout")"
+  fi
+  echo "Generating rollout $((rollout + 1))/${PLAN_ROLLOUTS}: $rollout_dir"
+  PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
+    python -m theo_conductor.plan "${args[@]}" --output-dir "$rollout_dir"
+done
 
 echo "Planning shard completed: $OUTPUT_DIR"

@@ -111,6 +111,12 @@ class ModelRegistry:
             and os.environ.get("OPENROUTER_API_KEY")
         ):
             client_config = {**client_config, "api_key": os.environ["OPENROUTER_API_KEY"]}
+        if (
+            raw.get("provider") == "openai"
+            and "api_key" not in client_config
+            and os.environ.get("OPENAI_API_KEY")
+        ):
+            client_config = {**client_config, "api_key": os.environ["OPENAI_API_KEY"]}
 
         if "tags" in raw:
             raw["tags"] = set(raw["tags"])

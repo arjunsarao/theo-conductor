@@ -54,7 +54,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=10)
-    parser.add_argument("--max-tokens", type=int, default=8192)
+    parser.add_argument("--max-tokens", type=int, default=16_384)
+    parser.add_argument("--fallback-max-tokens", type=int, default=32_768)
     parser.add_argument("--attempts", type=int, default=3)
     parser.add_argument("--checkpoint-size", type=int, default=25)
     parser.add_argument("--bootstrap-samples", type=int, default=10_000)
@@ -87,6 +88,7 @@ async def async_main() -> int:
         concurrency=args.concurrency,
         batch_size=args.batch_size,
         max_tokens=args.max_tokens,
+        fallback_max_tokens=args.fallback_max_tokens,
         attempts=args.attempts,
         checkpoint_size=args.checkpoint_size,
         force=args.force,

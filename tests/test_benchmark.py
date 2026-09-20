@@ -26,7 +26,28 @@ class AnswerClient:
             text=f"Reasoning\nFINAL: {self.answer}",
             usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
             latency_ms=20,
+            finish_reason="stop",
         )
+
+
+class BatchAnswerClient(AnswerClient):
+    supports_batch = True
+
+    def __init__(self, answers: list[str]):
+        super().__init__("")
+        self.answers = answers
+        self.batches = []
+
+    async def generate_batch(self, requests):
+        self.batches.append(requests)
+        return [
+            ModelResponse(
+                text=f"Reasoning\nFINAL: {answer}",
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                latency_ms=100,
+            )
+            for answer in self.answers[: len(requests)]
+        ]
 
 
 class JudgeClient:
@@ -192,7 +213,42 @@ def test_run_benchmark_evaluates_every_model_on_same_rows_and_resumes(tmp_path):
     }
     assert len(path.read_text().splitlines()) == 4
     assert all(json.loads(line)["response"] for line in path.read_text().splitlines())
+    assert all(json.loads(line)["finish_reason"] == "stop" for line in path.read_text().splitlines())
     assert all(json.loads(line)["correct"] is None for line in path.read_text().splitlines())
+
+
+def test_run_benchmark_uses_native_batch_for_selected_model(tmp_path):
+    client = BatchAnswerClient(["4", "5"])
+    registry = ModelRegistry(
+        [
+            ModelSpec(
+                model_idx="batched",
+                display_name="Batched",
+                client=client,
+                max_output_tokens=1234,
+            )
+        ]
+    )
+    dataset = [
+        {"id": "a", "question": "2+2?", "answer": "4", "subject": "math"},
+        {"id": "b", "question": "2+3?", "answer": "5", "subject": "math"},
+    ]
+
+    records = asyncio.run(
+        run_benchmark(
+            registry=registry,
+            dataset=dataset,
+            results_path=tmp_path / "results.jsonl",
+            use_model_output_limits=True,
+            batch_models={"batched"},
+            worker_batch_size=10,
+        )
+    )
+
+    assert len(client.batches) == 1
+    assert len(client.batches[0]) == 2
+    assert {request["max_tokens"] for request in client.batches[0]} == {1234}
+    assert [record["extracted_answer"] for record in records] == ["4", "5"]
 
 
 def test_summary_reports_accuracy_failures_usage_and_subjects():

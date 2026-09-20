@@ -22,6 +22,7 @@ models:
       type: openai_compatible
       base_url: https://openrouter.ai/api/v1
       model: openai/gpt-5.5
+      native_batch: true
 
   - model_idx: claude-opus-4.8
     provider: openrouter
@@ -43,6 +44,7 @@ models:
       type: openai_compatible
       base_url: https://openrouter.ai/api/v1
       model: anthropic/claude-opus-4.8
+      native_batch: true
 
   - model_idx: gemini-3.7-flash
     provider: openrouter
@@ -63,6 +65,7 @@ models:
       type: openai_compatible
       base_url: https://openrouter.ai/api/v1
       model: google/gemini-3.7-flash
+      native_batch: true
 
   - model_idx: glm-5.3
     provider: openrouter
@@ -103,6 +106,7 @@ models:
       type: openai_compatible
       base_url: https://openrouter.ai/api/v1
       model: moonshotai/kimi-k3
+      native_batch: true
 
   - model_idx: deepseek-v4-pro
     provider: openrouter

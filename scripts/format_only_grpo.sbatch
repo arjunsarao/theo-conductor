@@ -8,6 +8,8 @@
 #SBATCH --gres=gpu:2
 #SBATCH --output=slurm_logs/%x-%j.out
 #SBATCH --error=slurm_logs/%x-%j.err
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=arjun@firstprinciples.com
 
 # Train only the conductor's workflow formatting and structural validity.
 # Worker model endpoints are described by the registry for prompting and

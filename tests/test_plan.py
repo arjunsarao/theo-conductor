@@ -17,9 +17,11 @@ class PlanningClient:
     def __init__(self, *, invalid=False):
         self.calls = 0
         self.invalid = invalid
+        self.questions = []
 
     async def generate(self, **kwargs):
         self.calls += 1
+        self.questions.append(kwargs["question"])
         text = "not json" if self.invalid else json.dumps(
             {
                 "task_type": "general",
@@ -86,6 +88,7 @@ def test_generate_plans_is_valid_and_resumable(tmp_path):
     assert second["generated"] == 0
     assert second["resumed"] == 2
     assert client.calls == 2
+    assert client.questions == ["", ""]
     assert [record["dataset_id"] for record in records] == ["hle-0", "hle-1"]
     assert records[0]["plan"]["question"] == "Question 0"
     assert records[0]["worker_outputs"] == {}

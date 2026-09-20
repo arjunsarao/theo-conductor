@@ -1,0 +1,131 @@
+# OpenRouter catalog snapshot: 2026-09-11
+# Source: https://openrouter.ai/api/v1/models
+# Prices are USD per million tokens, converted from catalog USD/token.
+# These are standard catalog estimates; routing, caching, batch discounts and
+# time-dependent overrides can change actual charges.
+# Authentication: export OPENROUTER_API_KEY before loading this config.
+# API: POST https://openrouter.ai/api/v1/chat/completions (OpenAI compatible).
+# Descriptions are paraphrased into the registry's role/best_for fields.
+# Output limits follow catalog top_provider.max_completion_tokens.
+conductor_model: Qwen/Qwen3.8-27B
+train_gpu_set: "0"
+
+models:
+  - model_idx: deepseek-v4.1-flash
+    provider: openrouter
+    display_name: DeepSeek V4.1 Flash
+    name: deepseek-v4.1-flash
+    context_length: 1048576
+    max_output_tokens: 40000
+    supports_tools: true
+    supports_json: true
+    cost_per_1m_input_tokens: 0.15
+    cost_per_1m_output_tokens: 0.60
+    # Weekday UTC 01:00-04:00 and 06:00-10:00 rates: $0.30/$1.20.
+    # Cache reads: $0.003/M base, $0.006/M during those peak periods.
+    role: "sparse multimodal model using a causal encoder-decoder architecture"
+    best_for: "Text and image tasks with large contexts."
+    deployment:
+      mode: remote
+    client:
+      type: openai_compatible
+      base_url: https://openrouter.ai/api/v1
+      model: deepseek/deepseek-v4.1-flash
+
+  - model_idx: gemini-3.8-flash
+    provider: openrouter
+    display_name: Gemini 3.8 Flash
+    name: gemini-3.8-flash
+    context_length: 1048576
+    max_output_tokens: 32000
+    supports_tools: true
+    supports_json: true
+    cost_per_1m_input_tokens: 0.75
+    cost_per_1m_output_tokens: 3.75
+    role: "multimodal software and reasoning model"
+    best_for: "Software engineering, agent tasks, and reasoning across multiple steps."
+    deployment:
+      mode: remote
+    client:
+      type: openai_compatible
+      base_url: https://openrouter.ai/api/v1
+      model: google/gemini-3.8-flash
+
+  - model_idx: glm-5.3-flash
+    provider: openrouter
+    display_name: GLM 5.3 Flash
+    name: glm-5.3-flash
+    # Catalog context_length; top provider currently advertises 1048576.
+    context_length: 1310720
+    max_output_tokens: 45000
+    supports_tools: true
+    supports_json: true
+    cost_per_1m_input_tokens: 0.15
+    cost_per_1m_output_tokens: 0.50
+    role: "multimodal coding and agent model"
+    best_for: "Efficient programming and extended agent workflows with long contexts."
+    deployment:
+      mode: remote
+    client:
+      type: openai_compatible
+      base_url: https://openrouter.ai/api/v1
+      model: z-ai/glm-5.3-flash
+
+  - model_idx: qwen3.8-flash
+    provider: openrouter
+    display_name: Qwen3.8 Flash
+    name: qwen3.8-flash
+    context_length: 1000000
+    max_output_tokens: 55000
+    supports_tools: true
+    supports_json: true
+    cost_per_1m_input_tokens: 0.15
+    cost_per_1m_output_tokens: 0.47
+    role: "multimodal reasoning assistant"
+    best_for: "Coding, document and repository analysis, desktop tasks, charts, and video interpretation."
+    deployment:
+      mode: remote
+    client:
+      type: openai_compatible
+      base_url: https://openrouter.ai/api/v1
+      model: qwen/qwen3.8-flash
+
+  - model_idx: kimi-k2.6
+    provider: openrouter
+    display_name: Kimi K2.6
+    name: kimi-k2.6
+    context_length: 262144
+    max_output_tokens: 45000
+    supports_tools: true
+    supports_json: true
+    cost_per_1m_input_tokens: 0.95
+    cost_per_1m_output_tokens: 4.0
+    role: "multimodal engineering and orchestration model"
+    best_for: "Extended coding projects, interface generation, and coordinating multiple agents."
+    deployment:
+      mode: remote
+    client:
+      type: openai_compatible
+      base_url: https://openrouter.ai/api/v1
+      model: moonshotai/kimi-k2.6
+
+  - model_idx: nemotron-3-ultra
+    provider: openrouter
+    display_name: Nemotron 3 Ultra
+    name: nemotron-3-ultra
+    context_length: 262144
+    max_output_tokens: 40000
+    supports_tools: true
+    supports_json: true
+    cost_per_1m_input_tokens: 0.625
+    cost_per_1m_output_tokens: 3.125
+    # Catalog rates above; individual endpoints list different rates/limits:
+    # https://openrouter.ai/api/v1/models/nvidia/nemotron-3-ultra-550b-a55b/endpoints
+    role: "open-weight reasoning and orchestration model"
+    best_for: "Reasoning and orchestration using a hybrid Transformer-Mamba MoE with 55B active parameters."
+    deployment:
+      mode: remote
+    client:
+      type: openai_compatible
+      base_url: https://openrouter.ai/api/v1
+      model: nvidia/nemotron-3-ultra-550b-a55b

@@ -120,7 +120,7 @@ starts, and stops only models marked `deployment.mode: local`; remote workers
 are readiness-checked without being managed by the job.
 
 The direct training CLI uses MegaScience by default; the unified Slurm launcher
-defaults to HLE. Select `megascience`, `hle`, `hle-all`, `gpqa`, or the combined
+defaults to HLE. Select `megascience`, `hle`, `hle-text`, `hle-all`, `gpqa`, or the combined
 `hle-gpqa` dataset with `DATASET`:
 
 ```bash
@@ -133,8 +133,12 @@ DATASET=hle-gpqa MODEL_CONFIG=configs/worker_pool_large.yaml RUN_MODE=train \
 equivalent direct CLI options are `--dataset`, `--dataset-samples`, and
 `--validation-samples`.
 
-`hle` retains the established physics-adjacent HLE subset. Use `hle-all` when
-the complete HLE test split is required.
+`hle` retains the established physics-adjacent HLE subset.
+`hle-physics-text` is the 202-question subset whose category is exactly
+`Physics` and whose HLE `image` field is empty. `hle-text` contains the 2,158
+canonical text-only questions across every category. Use `hle-all` only when
+the complete 2,500-question split and proper multimodal input support are
+required.
 
 ## Pregenerating HLE workflows
 
@@ -142,10 +146,10 @@ Workflow planning can run independently from worker execution. The planning
 job loads the conductor once, generates and validates each DAG, and appends one
 resumable JSONL record per HLE ID. It never starts or calls worker models.
 
-For a single GPU job over the complete HLE split:
+For a single GPU job over the text-only HLE split:
 
 ```bash
-DATASET=hle-all MODEL_CONFIG=configs/worker_pool_frontier.yaml \
+DATASET=hle-text MODEL_CONFIG=configs/worker_pool_frontier.yaml \
   sbatch scripts/pregenerate_workflows.sbatch
 ```
 
@@ -158,7 +162,7 @@ For ten shards with at most four conductor jobs active at once:
 
 ```bash
 PLAN_JOB_ID=$(sbatch --parsable --array=0-9%4 \
-  --export=ALL,DATASET=hle-all,PLAN_SHARDS=10 \
+  --export=ALL,DATASET=hle-text,PLAN_SHARDS=10 \
   scripts/pregenerate_workflows.sbatch)
 
 sbatch --dependency="afterok:${PLAN_JOB_ID}" \
@@ -182,6 +186,11 @@ their workflow DAGs alongside GRPO traces:
 uv run streamlit run trace_viewer.py
 ```
 
+Its **HLE · workflow benchmark** page also discovers benchmark directories
+containing `summary.json` and `results.jsonl`. It reports overall and
+completed-only accuracy, external-judge coverage, failures, costs, latency,
+capped outputs, worker-model usage, workflow DAGs, and question-level details.
+
 Useful planning overrides include `DATASET_SAMPLES`, `PLAN_CONCURRENCY`,
 `PLAN_MAX_TOKENS`, `PLAN_ATTEMPTS`, `PLAN_TEMPERATURE`,
 `CONDUCTOR_SOURCE_MODEL`, `CONDUCTOR_LORA_PATH`, and `PLAN_OUTPUT_DIR`.
@@ -199,6 +208,12 @@ the extracted final answer, token usage, configured-price cost estimate,
 workflow latency and peak concurrency, judge verdict, and any item-level
 error. A hash of the plan, worker configuration, and execution settings keeps
 changed runs separate even when they share an output file.
+
+Workflow benchmarking is text-only by default, including when the supplied
+legacy plan file was generated from `hle-all`: canonical HLE IDs are joined
+back to the dataset, image-dependent plans are removed before `--offset` and
+`--max-samples` are applied, and subject metadata is restored. Pass
+`--include-multimodal` only after worker requests actually carry HLE images.
 
 Start with ten workflows using one of the existing complete HLE plan runs:
 
@@ -220,13 +235,70 @@ output directory for each official scored configuration. After fixing a
 transient endpoint or credential failure, add `--retry-failures` to replace
 the latest failed records without repeating successful workflows.
 
+### Dependency-layer worker batching
+
+`--concurrency` runs ordinary worker requests concurrently; it does not turn
+them into provider batch jobs. To pool all ready steps across workflows by DAG
+layer and worker model, pass `--batch-workers`:
+
+```bash
+OPENROUTER_API_KEY=... uv run theo-workflow-benchmark \
+  --plans outputs/hle-plans-20484 \
+  --config configs/worker_pool_frontier.yaml \
+  --output-dir outputs/hle-batched \
+  --batch-workers \
+  --worker-batch-size 50000
+```
+
+The frontier configuration enables `native_batch` for GPT, Claude, Gemini,
+and Kimi. Each non-empty batch-enabled model bucket is submitted inline to
+`POST /api/beta/batches`, then polled through `GET /api/beta/batches/:id` until
+it completes. OpenRouter requires one model per batch, so the scheduler's
+model buckets map directly to its API. The Batch Beta is text-only and uses a
+24-hour completion window; leave `--include-multimodal` off in this mode.
+
+Direct OpenAI-compatible clients can also set `native_batch: true`. Non-
+OpenRouter endpoints use the standard Files and `/v1/batches` protocol. A
+direct OpenAI worker reads its credential from `OPENAI_API_KEY`; OpenRouter
+workers use `OPENROUTER_API_KEY` as before.
+
+Models without native batch support still participate in the same global DAG
+schedule, but their bucket is executed as ordinary requests bounded by
+`--concurrency`. Thus the mode is safe for mixed worker pools. Batch jobs are
+asynchronous and dependency layers are sequential, so this mode targets fewer
+requests and provider batch pricing rather than minimum wall-clock latency.
+
+Run a CPU-only 500-question shard on the `train` Slurm partition instead of a
+login node with:
+
+```bash
+sbatch scripts/workflow_benchmark.sbatch
+```
+
+The default shard is offset 0. Override it explicitly with
+`BENCHMARK_OFFSET=500`, or submit all five text-only HLE shards as an array;
+the final task naturally processes only the remaining questions:
+
+```bash
+BENCHMARK_OFFSET=500 sbatch scripts/workflow_benchmark.sbatch
+sbatch --array=0-4 scripts/workflow_benchmark.sbatch
+```
+
+`BENCHMARK_SHARD_SIZE`, `BENCHMARK_BASE_OFFSET`, `BENCHMARK_OUTPUT_DIR`,
+`BENCHMARK_CONCURRENCY`, and `WORKER_BATCH_SIZE` provide the corresponding
+overrides. Set `BENCHMARK_RETRY_FAILURES=1` to retry checkpointed errors or
+`BENCHMARK_JUDGE=0` for a worker-only run. Slurm command-line options can
+override the script allocation, for example `sbatch --partition=cpu ...` on a
+cluster with a dedicated CPU partition. No GPU resource is requested.
+
 The default uses each model's `max_output_tokens` from the YAML configuration.
 The frontier budgets are grounded in observed maxima from an artificial HLE
 analysis benchmark, with about 20% headroom and upward rounding to 4,096-token
-boundaries: Gemini 12,288; GPT 16,384; Grok 24,576; Kimi 32,768; Claude 40,960;
-DeepSeek 40,960; and GLM 65,536. The GPT and Claude observations are
-closest-family proxies because the benchmark versions differ from the models
-in the frontier pool. Use `--max-worker-tokens N` for one fixed pool-wide cap.
+boundaries, then adjusted when the 50-question pilot reached a limit: Gemini
+12,288; GPT 32,768; Grok 24,576; Kimi 32,768; Claude 65,536; DeepSeek 40,960;
+and GLM 65,536. The GPT and Claude original observations are closest-family
+proxies because the benchmark versions differ from the models in the frontier
+pool. Use `--max-worker-tokens N` for one fixed pool-wide cap.
 
 For runs where truncation is less acceptable than potentially extreme cost,
 use `--use-model-context-limit`. Every worker request will then use that
@@ -266,6 +338,59 @@ attempts used. Remote worker workflows execute with up to 16 rollouts in flight
 by default. Each worker generation uses that model's configured
 `context_length`; use `--max-worker-tokens` to impose a smaller pool-wide
 ceiling. Tune concurrency with `--workflow-concurrency`.
+
+## Frontier HLE Physics benchmark
+
+Benchmark every frontier worker independently on all 202 text-only HLE Physics
+questions with a CPU-only Slurm job:
+
+```bash
+OPENROUTER_API_KEY=... sbatch scripts/benchmark_frontier_hle_physics.sbatch
+```
+
+GPT and Claude are submitted through the provider Batch API; the other
+frontier models use bounded concurrent requests. The job fails before making
+model calls if the canonical filtered dataset is not exactly 202 rows, uses
+each model's configured output limit, and checkpoints resumable results under
+`outputs/hle-physics-frontier/`. Semantic judging is enabled by default using
+the configured Kimi judge and GLM fallback. Set `BENCHMARK_JUDGE=0` for
+generation only, or set `BENCHMARK_OUTPUT_DIR` to keep separate runs.
+
+To benchmark only GPT-5.5 and Claude Opus 4.8 with ordinary concurrent
+requests, run:
+
+```bash
+OPENROUTER_API_KEY=... sbatch scripts/benchmark_premium_hle_physics.sbatch
+```
+
+This stores resumable results under `outputs/hle-physics-premium-live/`. Set
+`BENCHMARK_CONCURRENCY` to tune concurrent requests per model, or set
+`BENCHMARK_JUDGE=0` to skip semantic judging.
+
+Evaluate the Qwen3.8-27B conductor end to end on the same question set with:
+
+```bash
+OPENROUTER_API_KEY=... scripts/evaluate_qwen38_conductor_hle_physics.sh
+```
+
+The launcher submits a one-GPU planning job and a dependent CPU-only workflow
+job, releasing the GPU before remote worker inference begins. By default it
+evaluates the base `Qwen/Qwen3.8-27B` conductor. Set `CONDUCTOR_LORA_PATH` to
+evaluate a trained adapter instead. Plans are stored under
+`outputs/hle-plans-<planning-job-id>/`, and scored workflow results under
+`outputs/hle-physics-qwen38-conductor-<planning-job-id>/`.
+
+To benchmark Qwen3.8-27B itself as a direct solver instead—without generating
+plans or calling frontier workers—run:
+
+```bash
+sbatch scripts/benchmark_qwen38_direct_hle_physics.sbatch
+```
+
+This job starts a local one-GPU vLLM server, sends all 202 questions directly
+to Qwen, and checkpoints generations and judge verdicts under
+`outputs/hle-physics-qwen38-direct/`. Set `BENCHMARK_JUDGE=0` to skip semantic
+judging.
 
 ## Small-model MegaScience benchmark
 

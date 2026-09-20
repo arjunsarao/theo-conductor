@@ -67,6 +67,7 @@ def test_hle_loader_filters_and_normalizes_physics_adjacent_rows(monkeypatch):
                 "answer_type": "exactMatch",
                 "rationale": "Because physics.",
                 "category": "Physics",
+                "image": "",
             },
             {
                 "id": "2",
@@ -75,6 +76,7 @@ def test_hle_loader_filters_and_normalizes_physics_adjacent_rows(monkeypatch):
                 "answer_type": "exactMatch",
                 "rationale": "Because history.",
                 "category": "Humanities/Social Science",
+                "image": "data:image/png;base64,abc",
             },
         ]
     )
@@ -90,6 +92,7 @@ def test_hle_loader_filters_and_normalizes_physics_adjacent_rows(monkeypatch):
         "answer_type": "exactMatch",
         "reference_answer": "Because physics.",
         "subject": "Physics",
+        "is_multimodal": False,
     }
 
 
@@ -103,6 +106,7 @@ def test_hle_all_loader_preserves_non_physics_rows(monkeypatch):
                 "answer_type": "exactMatch",
                 "rationale": "Because physics.",
                 "category": "Physics",
+                "image": "",
             },
             {
                 "id": "2",
@@ -111,6 +115,7 @@ def test_hle_all_loader_preserves_non_physics_rows(monkeypatch):
                 "answer_type": "exactMatch",
                 "rationale": "Because history.",
                 "category": "Humanities/Social Science",
+                "image": "data:image/png;base64,abc",
             },
         ]
     )
@@ -120,6 +125,82 @@ def test_hle_all_loader_preserves_non_physics_rows(monkeypatch):
 
     assert len(loaded) == 2
     assert set(loaded["id"]) == {"hle-1", "hle-2"}
+    assert dict(zip(loaded["id"], loaded["is_multimodal"], strict=True)) == {
+        "hle-1": False,
+        "hle-2": True,
+    }
+
+
+def test_hle_text_loader_excludes_image_questions(monkeypatch):
+    raw = Dataset.from_list(
+        [
+            {
+                "id": "text",
+                "question": "Text question",
+                "answer": "A",
+                "answer_type": "exactMatch",
+                "rationale": "Text rationale",
+                "category": "Math",
+                "image": "",
+            },
+            {
+                "id": "image",
+                "question": "Inspect the figure",
+                "answer": "B",
+                "answer_type": "exactMatch",
+                "rationale": "Image rationale",
+                "category": "Math",
+                "image": "data:image/png;base64,abc",
+            },
+        ]
+    )
+    monkeypatch.setattr(data, "load_dataset", lambda *args, **kwargs: raw)
+
+    loaded = data.load_conductor_dataset("hle-text", seed=3)
+
+    assert loaded["id"] == ["hle-text"]
+    assert loaded["is_multimodal"] == [False]
+
+
+def test_hle_physics_text_loader_requires_exact_physics_category_and_no_image(monkeypatch):
+    raw = Dataset.from_list(
+        [
+            {
+                "id": "physics-text",
+                "question": "Text physics question",
+                "answer": "A",
+                "answer_type": "exactMatch",
+                "rationale": "Physics rationale",
+                "category": "Physics",
+                "image": "",
+            },
+            {
+                "id": "physics-image",
+                "question": "Image physics question",
+                "answer": "B",
+                "answer_type": "exactMatch",
+                "rationale": "Image rationale",
+                "category": "Physics",
+                "image": "data:image/png;base64,abc",
+            },
+            {
+                "id": "math-text",
+                "question": "Text math question",
+                "answer": "C",
+                "answer_type": "exactMatch",
+                "rationale": "Math rationale",
+                "category": "Math",
+                "image": "",
+            },
+        ]
+    )
+    monkeypatch.setattr(data, "load_dataset", lambda *args, **kwargs: raw)
+
+    loaded = data.load_conductor_dataset("hle-physics-text", seed=3)
+
+    assert loaded["id"] == ["hle-physics-text"]
+    assert loaded["subject"] == ["Physics"]
+    assert loaded["is_multimodal"] == [False]
 
 
 def test_gpqa_loader_formats_choices_and_preserves_explanation(monkeypatch):

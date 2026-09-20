@@ -28,6 +28,12 @@ from theo_conductor.trace_analysis import (
     workflow_to_graphviz,
 )
 from theo_conductor.benchmark import oracle_routing_breakdown
+from theo_conductor.hle_benchmark_view import (
+    discover_hle_benchmark_runs,
+    hle_run_metrics,
+    load_hle_benchmark as load_hle_benchmark_files,
+    worker_step_rows,
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -64,6 +70,44 @@ ERROR_STYLES = (
 
 
 st.set_page_config(page_title="Theo trace viewer", page_icon="◈", layout="wide")
+st.markdown(
+    """
+    <style>
+    div[data-testid="stExpander"]:has(.hle-card-correct) details {
+        border-left: 0.4rem solid #318260;
+        background-color: rgba(49, 130, 96, 0.10);
+    }
+    div[data-testid="stExpander"]:has(.hle-card-incorrect) details {
+        border-left: 0.4rem solid #c94848;
+        background-color: rgba(201, 72, 72, 0.10);
+    }
+    div[data-testid="stExpander"]:has(.hle-card-failed) details {
+        border-left: 0.4rem solid #577590;
+        background-color: rgba(87, 117, 144, 0.12);
+    }
+    div[data-testid="stExpander"]:has(.hle-card-unjudged) details {
+        border-left: 0.4rem solid #e9c46a;
+        background-color: rgba(233, 196, 106, 0.12);
+    }
+    div[data-testid="stExpander"]:has(.hle-card-correct) summary {
+        color: #318260;
+    }
+    div[data-testid="stExpander"]:has(.hle-card-incorrect) summary {
+        color: #c94848;
+    }
+    div[data-testid="stExpander"]:has(.hle-card-failed) summary {
+        color: #577590;
+    }
+    div[data-testid="stExpander"]:has(.hle-card-unjudged) summary {
+        color: #b4871e;
+    }
+    .hle-card-marker {
+        display: none;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 def reward_label(value: Any) -> str:
@@ -99,9 +143,9 @@ def error_style_map(records: list[TraceRecord]) -> dict[str, tuple[str, str]]:
 
 
 @st.cache_data(show_spinner=False)
-def load_path(path_text: str, modified_ns: int) -> TraceDataset:
+def load_paths(path_texts: tuple[str, ...], modified_ns: tuple[int, ...]) -> TraceDataset:
     del modified_ns  # Included in the cache key so changed traces are reloaded.
-    return TraceDataset.load(Path(path_text))
+    return TraceDataset.load(Path(path_text) for path_text in path_texts)
 
 
 @st.cache_data(show_spinner=False)
@@ -151,6 +195,16 @@ def load_megascience(summary_path: str, results_path: str, modified_ns: tuple[in
                 raise ValueError(f"Benchmark record on line {line_number} is not a JSON object.")
             records.append(record)
     return summary, records
+
+
+@st.cache_data(show_spinner=False)
+def load_hle_benchmark_page(
+    summary_path: str,
+    results_path: str,
+    modified_ns: tuple[int, int],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    del modified_ns
+    return load_hle_benchmark_files(Path(summary_path), Path(results_path))
 
 
 @st.cache_data(show_spinner=False)
@@ -359,40 +413,60 @@ def gpu_pressure_statistics(
     )
 
 
-def discover_trace_runs(root: Path = ROOT) -> dict[str, Path]:
+def discover_trace_runs(root: Path = ROOT) -> dict[str, tuple[Path, ...]]:
     """Discover both GRPO traces and frozen planning-only workflow runs."""
-    traces: dict[str, Path] = {}
+    traces: dict[str, tuple[Path, ...]] = {}
     for output_dir in (root / "outputs").glob("grpo-*"):
         job_id = output_dir.name.removeprefix("grpo-")
         path = output_dir / "traces" / TRACE_FILENAME
         if job_id.isdigit() and path.is_file():
-            traces[f"GRPO {job_id}"] = path
+            traces[f"GRPO {job_id}"] = (path,)
     for output_dir in (root / "outputs").glob("hle-plans-*"):
         run_id = output_dir.name.removeprefix("hle-plans-")
         path = output_dir / "plans.jsonl"
         if path.is_file():
-            traces[f"HLE plans {run_id}"] = path
+            traces[f"HLE plans {run_id}"] = (path,)
+            continue
+        rollout_paths = tuple(sorted(output_dir.glob("rollout-*/plans.jsonl")))
+        if rollout_paths:
+            traces[f"HLE plans {run_id} ({len(rollout_paths)} rollouts/question)"] = rollout_paths
+    physics_path = root / "outputs" / "hle-physics" / "plans.jsonl"
+    if physics_path.is_file():
+        traces["HLE physics"] = (physics_path,)
     return traces
 
 
-def selected_dataset() -> tuple[TraceDataset, str]:
+def selected_dataset() -> tuple[TraceDataset, str, str]:
     traces = discover_trace_runs()
 
     if not traces:
         st.info(
-            "No runs found under outputs/grpo-*/traces or outputs/hle-plans-*/plans.jsonl."
+            "No runs found under outputs/grpo-*/traces, outputs/hle-plans-*/plans.jsonl, "
+            "or outputs/hle-physics/plans.jsonl."
         )
         st.stop()
 
-    run_names = sorted(traces, key=lambda name: traces[name].stat().st_mtime_ns, reverse=True)
+    run_names = sorted(
+        traces,
+        key=lambda name: max(path.stat().st_mtime_ns for path in traces[name]),
+        reverse=True,
+    )
     latest_run = run_names[0]
     run_name = st.sidebar.selectbox(
         "Run",
         run_names,
         format_func=lambda value: f"{value} (latest)" if value == latest_run else value,
     )
-    path = traces[run_name]
-    return load_path(str(path), path.stat().st_mtime_ns), str(path.relative_to(ROOT))
+    paths = traces[run_name]
+    path_texts = tuple(str(path) for path in paths)
+    dataset = load_paths(path_texts, tuple(path.stat().st_mtime_ns for path in paths))
+    first_relative = paths[0].relative_to(ROOT)
+    source_name = (
+        str(first_relative)
+        if len(paths) == 1
+        else f"{paths[0].parent.parent.relative_to(ROOT)}/rollout-*/plans.jsonl ({len(paths)} files)"
+    )
+    return dataset, source_name, str(paths[0])
 
 
 def pie_chart(
@@ -1133,7 +1207,7 @@ def render_trace_analysis_page() -> None:
     st.caption("Inspect reward cohorts, validation failures, conductor plans, and worker responses.")
 
     try:
-        dataset, source_name = selected_dataset()
+        dataset, source_name, telemetry_source = selected_dataset()
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
         st.error(str(exc))
         st.stop()
@@ -1145,7 +1219,7 @@ def render_trace_analysis_page() -> None:
 
     error_styles = error_style_map(dataset.records)
     render_overview(dataset, error_styles)
-    render_memory_telemetry(source_name)
+    render_memory_telemetry(telemetry_source)
 
     st.subheader("Trace records")
     reward_values = sorted({float(record.data.get("reward", 0)) for record in dataset.records})
@@ -1429,8 +1503,303 @@ def render_megascience_page() -> None:
         render_megascience_record(record)
 
 
-page_name = st.sidebar.radio("Viewer page", ("Trace analysis", "MegaScience · small models"))
-if page_name == "MegaScience · small models":
+def render_hle_benchmark_record(record: dict[str, Any]) -> None:
+    if record.get("error"):
+        outcome, icon, card_state = "Workflow failed", "⚫", "failed"
+    elif record.get("judge_error"):
+        outcome, icon, card_state = "Judge failed", "🟡", "unjudged"
+    elif record.get("correct") is True:
+        outcome, icon, card_state = "Correct", "🟢", "correct"
+    elif record.get("correct") is False:
+        outcome, icon, card_state = "Incorrect", "🔴", "incorrect"
+    elif record.get("extracted_answer") is None:
+        outcome, icon, card_state = "Missing final answer", "🟡", "unjudged"
+    else:
+        outcome, icon, card_state = "Awaiting judgment", "🟡", "unjudged"
+    question = str(record.get("question") or "Question unavailable")
+    benchmark_position = record.get("benchmark_position")
+    card_title = (
+        f"HLE {benchmark_position}"
+        if benchmark_position is not None
+        else f'HLE {record.get("example_id") or "unknown"}'
+    )
+    with st.expander(card_title):
+        st.markdown(
+            f'<span class="hle-card-marker hle-card-{card_state}"></span>',
+            unsafe_allow_html=True,
+        )
+        metadata = [f"{icon} {outcome}"]
+        if record.get("example_id"):
+            metadata.append(str(record["example_id"]))
+        if record.get("subject"):
+            metadata.append(str(record["subject"]))
+        if record.get("workflow_runtime_ms") is not None:
+            metadata.append(f'{float(record["workflow_runtime_ms"]) / 1000:.1f} s')
+        if record.get("workflow_steps") is not None:
+            metadata.append(f'{int(record["workflow_steps"])} steps')
+        if record.get("total_tokens") is not None:
+            metadata.append(f'{int(record["total_tokens"]):,} tokens')
+        if record.get("estimated_cost_usd") is not None:
+            metadata.append(f'${float(record["estimated_cost_usd"]):.3f}')
+        if metadata:
+            st.caption(" · ".join(metadata))
+
+        question_tab, plan_tab, workers_tab, answers_tab, raw_tab = st.tabs(
+            ("Question", "Parsed Plan", "Worker Outputs", "Answers", "Raw Completion")
+        )
+        with question_tab:
+            st.markdown(question)
+        with plan_tab:
+            render_plan(record.get("plan"))
+        with workers_tab:
+            outputs = record.get("worker_outputs") or {}
+            if not outputs:
+                st.caption("No worker outputs were recorded.")
+            for step_id, output in outputs.items():
+                if not isinstance(output, dict):
+                    continue
+                with st.expander(f'{step_id} · {output.get("model_id") or "unknown model"}'):
+                    usage = output.get("usage") or {}
+                    details = []
+                    if output.get("latency_ms") is not None:
+                        details.append(f'{float(output["latency_ms"]) / 1000:.1f} s')
+                    if usage.get("total_tokens") is not None:
+                        details.append(f'{int(usage["total_tokens"]):,} tokens')
+                    if usage.get("estimated_cost_usd") is not None:
+                        details.append(f'${float(usage["estimated_cost_usd"]):.3f}')
+                    if output.get("finish_reason"):
+                        details.append(f'finish: {output["finish_reason"]}')
+                    if details:
+                        st.caption(" · ".join(details))
+                    st.markdown(str(output.get("text") or "_No visible response text._"))
+        with answers_tab:
+            columns = st.columns(2)
+            with columns[0]:
+                st.markdown("**Extracted answer**")
+                st.markdown(str(record.get("extracted_answer") or "_No `FINAL:` answer extracted._"))
+            with columns[1]:
+                st.markdown("**Gold/reference answer**")
+                st.markdown(str(record.get("reference_answer") or record.get("gold_answer") or "—"))
+            if record.get("judge_reason"):
+                st.info(f'{record.get("judge_model") or "Judge"}: {record["judge_reason"]}')
+            if record.get("judge_error"):
+                st.warning(f'Judge error: {record["judge_error"]}')
+            if record.get("error"):
+                st.error(str(record["error"]))
+        with raw_tab:
+            st.markdown(str(record.get("response") or "_No response._"))
+
+
+def render_hle_benchmark_page() -> None:
+    st.title("Theo Conductor on HLE Physics · Text Only")
+    st.caption(
+        "Inspect end-to-end workflow results for the 202-question HLE physics, text-only subset."
+    )
+
+    runs = discover_hle_benchmark_runs(ROOT)
+    if not runs:
+        st.info(
+            "No text-only HLE physics benchmark runs with summary.json and results.jsonl "
+            "were found under outputs/."
+        )
+        return
+    run_names = sorted(
+        runs,
+        key=lambda name: runs[name][0].stat().st_mtime_ns,
+        reverse=True,
+    )
+    run_name = st.sidebar.selectbox("HLE physics benchmark run", run_names)
+    summary_path, results_path = runs[run_name]
+    try:
+        summary, records = load_hle_benchmark_page(
+            str(summary_path),
+            str(results_path),
+            (summary_path.stat().st_mtime_ns, results_path.stat().st_mtime_ns),
+        )
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        st.error(f"Could not load the HLE physics benchmark: {exc}")
+        return
+
+    metrics = hle_run_metrics(records)
+    model_metrics = (summary.get("models") or {}).get("theo-conductor") or {}
+    ci = model_metrics.get("accuracy_95_ci") or [None, None]
+    headline = st.columns(7)
+    values = (
+        (f'{metrics["workflows"]:,}', "Questions"),
+        (_percent(metrics["accuracy"]), "Overall accuracy"),
+        (_percent(metrics["completed_accuracy"]), "Completed accuracy"),
+        (f'{metrics["failed"]:,}', "Workflow failures"),
+        (f'{metrics["missing_final"]:,}', "Missing FINAL"),
+        (f'${metrics["total_cost_usd"]:.2f}' if metrics["total_cost_usd"] is not None else "—", "Worker cost"),
+        (f'{metrics["mean_runtime_ms"] / 1000:.1f}s' if metrics["mean_runtime_ms"] is not None else "—", "Mean runtime"),
+    )
+    for column, (value, label) in zip(headline, values, strict=True):
+        column.metric(label, value)
+
+    mode = summary.get("worker_token_limit_mode") or "unknown"
+    dataset_name = "HLE physics · text-only"
+    ci_text = (
+        f' · 95% CI {_percent(ci[0])}–{_percent(ci[1])}'
+        if ci[0] is not None and ci[1] is not None
+        else ""
+    )
+    st.caption(
+        f'{run_name} · {dataset_name} · config {str(summary.get("execution_config_sha256") or "—")[:12]} · '
+        f'token mode {mode} · workflow concurrency {summary.get("concurrency", "—")} · '
+        f'temperature {summary.get("worker_temperature", "—")}{ci_text}'
+    )
+    if not summary.get("text_only"):
+        st.warning(
+            "This run is not marked text-only. Image-dependent HLE questions may have been scored without their images."
+        )
+    if metrics["externally_judged"] < metrics["scored"]:
+        st.info(
+            f'{metrics["scored"] - metrics["externally_judged"]:,} failed workflow(s) were automatically scored incorrect without an external judge response.'
+        )
+
+    outcome_rows = pd.DataFrame(
+        [
+            {"Outcome": "Correct", "Count": metrics["correct"]},
+            {"Outcome": "Incorrect", "Count": metrics["incorrect"]},
+            {"Outcome": "Workflow failed", "Count": metrics["failed"]},
+            {"Outcome": "Judge failed", "Count": metrics["judge_failed"]},
+        ]
+    )
+    overview_columns = st.columns((1, 2))
+    with overview_columns[0]:
+        st.subheader("Outcomes")
+        st.altair_chart(
+            alt.Chart(outcome_rows)
+            .mark_arc(innerRadius=45)
+            .encode(
+                theta=alt.Theta("Count:Q"),
+                color=alt.Color(
+                    "Outcome:N",
+                    scale=alt.Scale(
+                        domain=["Correct", "Incorrect", "Workflow failed", "Judge failed"],
+                        range=["#318260", "#c94848", "#000000", "#9ca3af"],
+                    ),
+                    title=None,
+                ),
+                tooltip=["Outcome:N", "Count:Q"],
+            )
+            .properties(height=250),
+            width="stretch",
+        )
+    with overview_columns[1]:
+        st.subheader("Run health")
+        health_rows = pd.DataFrame(
+            [
+                {"Metric": "Completed", "Count": metrics["completed"]},
+                {"Metric": "Completed without errors or token caps (including judge)", "Count": metrics["clean_completed"]},
+                {"Metric": "Judge failed", "Count": metrics["judge_failed"]},
+                {"Metric": "Externally judged", "Count": metrics["externally_judged"]},
+                {"Metric": "Capped worker steps", "Count": metrics["capped_steps"]},
+                {"Metric": "Missing FINAL", "Count": metrics["missing_final"]},
+            ]
+        )
+        st.dataframe(health_rows, hide_index=True, width="stretch")
+        if metrics["error_types"]:
+            st.dataframe(
+                pd.DataFrame(
+                    [{"Error type": name, "Count": count} for name, count in metrics["error_types"].items()]
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+
+    steps = pd.DataFrame(worker_step_rows(records))
+    st.subheader("Worker model usage")
+    if steps.empty:
+        st.caption("No completed worker steps were found.")
+    else:
+        for column in ("latency_ms", "prompt_tokens", "completion_tokens", "total_tokens", "estimated_cost_usd"):
+            steps[column] = pd.to_numeric(steps[column], errors="coerce")
+        worker_summary = (
+            steps.groupby("model_id", dropna=False)
+            .agg(
+                Calls=("step_id", "count"),
+                Capped=("finish_reason", lambda values: int((values == "length").sum())),
+                **{
+                    "Mean latency (s)": ("latency_ms", lambda values: values.mean() / 1000),
+                    "Mean prompt tokens": ("prompt_tokens", "mean"),
+                    "Mean output tokens": ("completion_tokens", "mean"),
+                    "Total cost ($)": ("estimated_cost_usd", "sum"),
+                },
+            )
+            .reset_index()
+            .rename(columns={"model_id": "Model"})
+            .sort_values("Calls", ascending=False)
+        )
+        st.dataframe(
+            worker_summary,
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "Mean latency (s)": st.column_config.NumberColumn(format="%.1f"),
+                "Mean prompt tokens": st.column_config.NumberColumn(format="%.0f"),
+                "Mean output tokens": st.column_config.NumberColumn(format="%.0f"),
+                "Total cost ($)": st.column_config.NumberColumn(format="$%.3f"),
+            },
+        )
+
+    st.subheader("Question browser")
+    subjects = sorted({str(record.get("subject") or "unknown") for record in records})
+    error_types = sorted({str(record.get("error_type") or "unknown") for record in records if record.get("error")})
+    filters = st.columns((1, 1, 1, 2))
+    selected_outcome = filters[0].selectbox(
+        "Outcome",
+        ("All", "Correct", "Incorrect", "Workflow failed", "Judge failed", "Missing FINAL", "Capped step"),
+    )
+    selected_subjects = filters[1].multiselect("Subjects", subjects, placeholder="All subjects")
+    selected_errors = filters[2].multiselect("Error types", error_types, placeholder="All errors")
+    search = filters[3].text_input("Search HLE physics records")
+
+    def matches_hle(record: dict[str, Any]) -> bool:
+        if selected_subjects and str(record.get("subject") or "unknown") not in selected_subjects:
+            return False
+        if selected_errors and str(record.get("error_type") or "unknown") not in selected_errors:
+            return False
+        has_capped = any(
+            isinstance(output, dict) and output.get("finish_reason") == "length"
+            for output in (record.get("worker_outputs") or {}).values()
+        )
+        outcomes = {
+            "Correct": record.get("correct") is True,
+            "Incorrect": record.get("correct") is False and record.get("error") is None and not record.get("judge_error"),
+            "Workflow failed": record.get("error") is not None,
+            "Judge failed": record.get("error") is None and bool(record.get("judge_error")),
+            "Missing FINAL": record.get("error") is None and record.get("extracted_answer") is None,
+            "Capped step": has_capped,
+        }
+        if selected_outcome != "All" and not outcomes[selected_outcome]:
+            return False
+        if search:
+            haystack = " ".join(
+                str(record.get(key) or "")
+                for key in ("example_id", "question", "response", "extracted_answer", "reference_answer", "error")
+            )
+            if search.casefold() not in haystack.casefold():
+                return False
+        return True
+
+    matching = [record for record in records if matches_hle(record)]
+    pages = max(1, (len(matching) + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = int(st.number_input("HLE physics page", min_value=1, max_value=pages, value=1, step=1))
+    start = (page - 1) * PAGE_SIZE
+    shown = matching[start : start + PAGE_SIZE]
+    st.caption(f"Showing {start + 1 if shown else 0}–{start + len(shown)} of {len(matching):,} records")
+    for record in shown:
+        render_hle_benchmark_record(record)
+
+
+page_name = st.sidebar.radio(
+    "Viewer page",
+    ("Trace analysis", "HLE Physics · text only", "MegaScience · small models"),
+)
+if page_name == "HLE Physics · text only":
+    render_hle_benchmark_page()
+elif page_name == "MegaScience · small models":
     render_megascience_page()
 else:
     render_trace_analysis_page()

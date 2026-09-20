@@ -1,5 +1,6 @@
 import os
 import random
+from pathlib import Path
 
 from datasets import Dataset, DatasetDict, concatenate_datasets, load_dataset
 from dotenv import load_dotenv
@@ -16,7 +17,32 @@ PHYSICS_ADJACENT_DOMAINS = {
 
 MEGASCIENCE_DATASET_ID = "MegaScience/MegaScience"
 DEFAULT_MEGASCIENCE_SAMPLES = 2_000
-TRAINING_DATASETS = ("megascience", "hle", "hle-all", "gpqa", "hle-gpqa")
+TRAINING_DATASETS = (
+    "megascience",
+    "hle",
+    "hle-physics-text",
+    "hle-text",
+    "hle-all",
+    "gpqa",
+    "hle-gpqa",
+)
+
+
+def _cached_hle_test_split() -> Dataset | None:
+    """Load an already-materialized HLE Arrow split when Hub/cache locking is unavailable."""
+    roots = [
+        Path(os.environ.get("HF_HOME", "")) / "datasets",
+        Path(os.environ.get("THEO_HF_HOME", "")) / "datasets",
+        Path.home() / ".cache" / "huggingface" / "datasets",
+    ]
+    candidates: list[Path] = []
+    for root in roots:
+        if str(root) == "datasets" or not root.is_dir():
+            continue
+        candidates.extend(root.glob("cais___hle/default/*/*/hle-test.arrow"))
+    if not candidates:
+        return None
+    return Dataset.from_file(str(max(candidates, key=lambda path: path.stat().st_mtime_ns)))
 
 
 def format_mcq_batch(examples, seed=42):
@@ -61,25 +87,56 @@ def is_physics_adjacent_domain(value: str | None) -> bool:
     return value in PHYSICS_ADJACENT_DOMAINS
 
 
-def load_hle_dataset(*, physics_only: bool = True):
-    hle = load_dataset("cais/hle", split="test", token=os.getenv("HF_TOKEN"))
+def load_hle_dataset(*, physics_only: bool = True, text_only: bool = False):
+    try:
+        hle = load_dataset("cais/hle", split="test", token=os.getenv("HF_TOKEN"))
+    except (ConnectionError, OSError, RuntimeError):
+        hle = _cached_hle_test_split()
+        if hle is None:
+            raise
+    # Drop image previews and rationale images before row-wise filtering; the
+    # text-only split needs only the lightweight image-presence string.
+    hle = hle.select_columns(
+        [
+            column
+            for column in ("id", "question", "image", "answer", "answer_type", "rationale", "category")
+            if column in hle.column_names
+        ]
+    )
+    if text_only:
+        # HLE uses an empty string, rather than null, for questions without an image.
+        hle = hle.filter(lambda ex: not bool(ex.get("image")), keep_in_memory=True)
     if physics_only:
-        hle = hle.filter(lambda ex: is_physics_adjacent_domain(ex.get("category")))
+        hle = hle.filter(
+            lambda ex: is_physics_adjacent_domain(ex.get("category")),
+            keep_in_memory=True,
+        )
     return hle.map(
         lambda ex: {
             "id": f"hle-{ex['id']}",
             "reference_answer": ex.get("rationale"),
             "subject": ex.get("category"),
+            "is_multimodal": bool(ex.get("image")),
         },
         remove_columns=["category", "rationale"],
+        keep_in_memory=True,
     ).select_columns(
-        ["id", "question", "answer", "answer_type", "reference_answer", "subject"]
+        ["id", "question", "answer", "answer_type", "reference_answer", "subject", "is_multimodal"]
     )
 
 
 def load_hle_physics_dataset():
     """Load the established physics-adjacent HLE subset."""
     return load_hle_dataset(physics_only=True)
+
+
+def load_hle_physics_text_dataset():
+    """Load the canonical 202 text-only HLE questions categorized as Physics."""
+    dataset = load_hle_dataset(physics_only=False, text_only=True)
+    return dataset.filter(
+        lambda ex: ex.get("subject") == "Physics",
+        keep_in_memory=True,
+    )
 
 
 def load_gpqa_physics_dataset(seed=42):
@@ -120,8 +177,10 @@ def load_gpqa_physics_dataset(seed=42):
         fn_kwargs={"seed": seed},
     ).add_column("answer_type", ["multipleChoice"] * len(gpqa_physics))
 
+    gpqa_physics = gpqa_physics.add_column("is_multimodal", [False] * len(gpqa_physics))
+
     return gpqa_physics.map(lambda ex: {"id": f"gpqa-{ex['id']}"}).select_columns(
-        ["id", "question", "answer", "answer_type", "reference_answer", "subject"]
+        ["id", "question", "answer", "answer_type", "reference_answer", "subject", "is_multimodal"]
     )
 
 
@@ -153,7 +212,8 @@ def load_megascience_dataset(
         dataset = dataset.shuffle(seed=seed).select(range(min(max_samples, len(dataset))))
 
     dataset = dataset.add_column("id", [f"megascience-{index}" for index in range(len(dataset))])
-    return dataset.add_column("answer_type", ["freeForm"] * len(dataset))
+    dataset = dataset.add_column("answer_type", ["freeForm"] * len(dataset))
+    return dataset.add_column("is_multimodal", [False] * len(dataset))
 
 
 def build_training_dataset(
@@ -197,6 +257,10 @@ def load_conductor_dataset(
         return load_megascience_dataset(seed=seed, max_samples=limit)
     if dataset_name == "hle":
         dataset = load_hle_physics_dataset()
+    elif dataset_name == "hle-physics-text":
+        dataset = load_hle_physics_text_dataset()
+    elif dataset_name == "hle-text":
+        dataset = load_hle_dataset(physics_only=False, text_only=True)
     elif dataset_name == "hle-all":
         dataset = load_hle_dataset(physics_only=False)
     elif dataset_name == "gpqa":
@@ -206,7 +270,7 @@ def load_conductor_dataset(
             [load_hle_physics_dataset(), load_gpqa_physics_dataset(seed=seed)]
         )
 
-    dataset = dataset.shuffle(seed=seed)
+    dataset = dataset.shuffle(seed=seed, keep_in_memory=True)
     if max_samples is not None:
         dataset = dataset.select(range(min(max_samples, len(dataset))))
     return dataset

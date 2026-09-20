@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import theo_conductor.models.openai_compat as openai_compat
 from theo_conductor.models.openai_compat import OpenAICompatibleClient, build_message
 
 
@@ -63,6 +64,101 @@ def test_openai_compatible_client_configures_transport_timeouts_and_retries():
     assert client.client.timeout.read == 600
     assert client.client.timeout.connect == 30
     assert client.client.max_retries == 0
+
+
+def test_openrouter_batch_submits_inline_and_restores_result_order(monkeypatch):
+    captured = {}
+
+    class Response:
+        def __init__(self, body, status_code=200):
+            self.body = body
+            self.status_code = status_code
+
+        def json(self):
+            return self.body
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+    class BatchHttpClient:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, *, json):
+            captured["post_url"] = url
+            captured["payload"] = json
+            return Response({"id": "batch-1", "status": "validating"}, status_code=202)
+
+        async def get(self, url):
+            captured["get_url"] = url
+            return Response({
+                "id": "batch-1",
+                "status": "completed",
+                "results": [
+                    {
+                        "custom_id": "worker-1",
+                        "response": {
+                            "status_code": 200,
+                            "body": {
+                                "choices": [{
+                                    "message": {"content": "second"},
+                                    "finish_reason": "stop",
+                                }],
+                                "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+                            },
+                        },
+                        "error": None,
+                    },
+                    {
+                        "custom_id": "worker-0",
+                        "response": None,
+                        "error": {"code": "bad_request", "message": "bad item"},
+                    },
+                ],
+            })
+
+    monkeypatch.setattr(openai_compat.httpx, "AsyncClient", BatchHttpClient)
+    monkeypatch.setattr(openai_compat.asyncio, "sleep", AsyncMock())
+    client = OpenAICompatibleClient(
+        base_url="https://openrouter.ai/api/v1",
+        api_key="secret",
+        model="openai/gpt-test",
+        native_batch=True,
+    )
+    request = {
+        "instruction": "Answer.",
+        "question": "Question?",
+        "context": {},
+        "max_tokens": 8,
+        "temperature": 0.0,
+    }
+
+    results = asyncio.run(client.generate_batch([request, request]))
+
+    assert client.batch_backend == "openrouter"
+    assert captured["post_url"] == "https://openrouter.ai/api/beta/batches"
+    assert captured["get_url"] == "https://openrouter.ai/api/beta/batches/batch-1"
+    assert list(captured["payload"]) == ["endpoint", "model", "requests"]
+    assert captured["payload"]["endpoint"] == "/v1/chat/completions"
+    assert captured["payload"]["model"] == "openai/gpt-test"
+    assert [item["custom_id"] for item in captured["payload"]["requests"]] == [
+        "worker-0",
+        "worker-1",
+    ]
+    assert all(
+        item["body"]["model"] == "openai/gpt-test"
+        for item in captured["payload"]["requests"]
+    )
+    assert isinstance(results[0], RuntimeError)
+    assert results[1].text == "second"
+    assert results[1].usage["completion_tokens"] == 1
 
 
 @pytest.mark.parametrize(

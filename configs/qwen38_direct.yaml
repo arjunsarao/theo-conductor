@@ -1,0 +1,19 @@
+models:
+  - model_idx: qwen3.8-27b-direct
+    provider: local
+    display_name: Qwen3.8-27B (direct)
+    name: Qwen/Qwen3.8-27B
+    context_length: 262144
+    # Leave 1,024 tokens for the system/user prompt inside the model context.
+    max_output_tokens: 261120
+    supports_tools: true
+    supports_json: true
+    role: "direct HLE solver"
+    best_for: "Direct scientific and mathematical problem solving without conductor routing."
+    client:
+      type: openai_compatible
+      base_url: http://127.0.0.1:8007/v1
+      model: qwen3.8-27b-direct
+      # A full-budget generation takes roughly 82 minutes at the observed 53 TPS.
+      timeout_seconds: 7200
+      max_retries: 0

@@ -8,6 +8,8 @@
 #SBATCH --mem=8G
 #SBATCH --output=slurm_logs/%x-%j.out
 #SBATCH --error=slurm_logs/%x-%j.err
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=arjun@firstprinciples.com
 
 set -Eeuo pipefail
 

@@ -11,6 +11,7 @@ from theo_conductor.workflow_benchmark import (
     execution_config_hash,
     load_results,
     run_workflow_benchmark,
+    select_text_only_plans,
     summarize_workflows,
 )
 
@@ -109,6 +110,79 @@ def test_runs_ten_workflows_and_resumes_without_duplicate_calls(tmp_path):
     assert all(record["total_tokens"] == 15 for record in first)
     assert all(record["estimated_cost_usd"] == 0.00002 for record in first)
     assert summarize_workflows(first, bootstrap_samples=10)["completed"] == 10
+
+
+def test_worker_batching_pools_models_across_dependency_layers(tmp_path):
+    class BatchClient:
+        supports_batch = True
+
+        def __init__(self):
+            self.batch_sizes = []
+            self.single_calls = 0
+
+        async def generate(self, **kwargs):
+            self.single_calls += 1
+            raise AssertionError("native-batched client should not receive single calls")
+
+        async def generate_batch(self, requests):
+            self.batch_sizes.append(len(requests))
+            return [
+                ModelResponse(
+                    text=(
+                        "analysis"
+                        if not request["context"]
+                        else f"FINAL: {request['question'].rsplit(' ', 1)[-1]}"
+                    ),
+                    usage={"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+                )
+                for request in requests
+            ]
+
+    client = BatchClient()
+    registry = ModelRegistry([ModelSpec(model_idx="worker", client=client)])
+    records = plan_records(2)
+    for record in records:
+        record["plan"]["workflow"] = [
+            {
+                "step_id": "analysis",
+                "model_id": "worker",
+                "instruction": "Analyze.",
+                "access_list": ["question"],
+            },
+            {
+                "step_id": "final",
+                "model_id": "worker",
+                "instruction": "Answer.",
+                "access_list": ["question", "analysis"],
+            },
+        ]
+
+    results = asyncio.run(run_workflow_benchmark(
+        registry=registry,
+        plan_records=records,
+        results_path=tmp_path / "results.jsonl",
+        execution_config_sha256="batched",
+        batch_workers=True,
+    ))
+
+    assert client.batch_sizes == [2, 2]
+    assert client.single_calls == 0
+    assert [record["extracted_answer"] for record in results] == ["0", "1"]
+    assert all(record["workflow_steps"] == 2 for record in results)
+
+
+def test_select_text_only_plans_filters_ids_and_restores_subjects():
+    selected = select_text_only_plans(
+        plan_records(3),
+        [
+            {"id": "hle-0", "subject": "Math"},
+            {"id": "hle-2", "subject": "Physics"},
+        ],
+    )
+
+    assert [record["dataset_id"] for record in selected] == ["hle-0", "hle-2"]
+    assert [record["subject"] for record in selected] == ["Math", "Physics"]
+    assert all(record["is_multimodal"] is False for record in selected)
 
 
 def test_model_context_limit_uses_each_workers_own_configured_length(tmp_path):
@@ -344,6 +418,7 @@ def test_cli_judge_verdicts_are_persisted_to_results(tmp_path, monkeypatch):
         "--plans", str(plans),
         "--config", str(config),
         "--output-dir", str(output),
+        "--include-multimodal",
         "--bootstrap-samples", "10",
     ]))
 

@@ -122,7 +122,8 @@ async def create_task(question: str, registry: ModelRegistry, conductor_model: s
 
     response = await registry.get(conductor_model).client.generate(
         instruction=build_conductor_prompt(question, registry),
-        question=question,
+        # build_conductor_prompt already includes the complete question.
+        question="",
         context={},
         max_tokens=2048,
         temperature=0.1,

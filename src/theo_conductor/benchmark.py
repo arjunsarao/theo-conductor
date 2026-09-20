@@ -14,7 +14,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-from .data import TRAINING_DATASETS, build_conductor_splits
+from .data import TRAINING_DATASETS, build_conductor_splits, load_conductor_dataset
 from .models.registry import ModelRegistry
 from .models.openai_compat import OpenAICompatibleClient
 
@@ -141,6 +141,7 @@ async def judge_records(
     concurrency: int = 8,
     batch_size: int = 10,
     max_tokens: int = 8192,
+    fallback_max_tokens: int | None = None,
     attempts: int = 3,
     force: bool = False,
 ) -> list[dict[str, Any]]:
@@ -151,6 +152,8 @@ async def judge_records(
         raise ValueError("judge batch size must be positive")
     if max_tokens <= 0:
         raise ValueError("judge max tokens must be positive")
+    if fallback_max_tokens is not None and fallback_max_tokens <= 0:
+        raise ValueError("fallback judge max tokens must be positive")
     if attempts <= 0:
         raise ValueError("judge attempts must be positive")
 
@@ -188,12 +191,14 @@ async def judge_records(
         nonlocal completed
         identified_batch = [(f"batch-{batch_index}-item-{index}", record) for index, record in enumerate(records_batch)]
         expected_ids = [item_id for item_id, _ in identified_batch]
-        backends = [(client, judge_model)]
+        backends = [(client, judge_model, max_tokens)]
         if fallback_client is not None:
-            backends.append((fallback_client, fallback_judge_model))
+            backends.append(
+                (fallback_client, fallback_judge_model, fallback_max_tokens or max_tokens)
+            )
         last_error: Exception | None = None
         judged = False
-        for backend, backend_model in backends:
+        for backend, backend_model, backend_max_tokens in backends:
             for _attempt in range(1, attempts + 1):
                 try:
                     async with semaphore:
@@ -201,7 +206,7 @@ async def judge_records(
                             instruction=JUDGE_INSTRUCTION,
                             question=build_judge_batch_question(identified_batch),
                             context={},
-                            max_tokens=max_tokens,
+                            max_tokens=backend_max_tokens,
                             temperature=0.0,
                             response_format=build_judge_response_format(expected_ids),
                         )
@@ -267,6 +272,7 @@ async def judge_records_with_checkpoints(
     concurrency: int = 8,
     batch_size: int = 10,
     max_tokens: int = 8192,
+    fallback_max_tokens: int | None = None,
     attempts: int = 3,
     checkpoint_size: int = 25,
     force: bool = False,
@@ -295,6 +301,7 @@ async def judge_records_with_checkpoints(
             concurrency=concurrency,
             batch_size=batch_size,
             max_tokens=max_tokens,
+            fallback_max_tokens=fallback_max_tokens,
             attempts=attempts,
             force=force,
         )
@@ -485,25 +492,43 @@ async def run_benchmark(
     dataset: Sequence[dict[str, Any]],
     results_path: Path,
     max_tokens: int = 4096,
+    use_model_output_limits: bool = False,
     temperature: float = 0.0,
     concurrency: int = 4,
+    batch_models: set[str] | None = None,
+    worker_batch_size: int = 50_000,
 ) -> list[dict[str, Any]]:
     """Benchmark every registered model on every row, resuming from JSONL."""
     if max_tokens <= 0:
         raise ValueError("max_tokens must be positive")
     if concurrency <= 0:
         raise ValueError("concurrency must be positive")
+    if worker_batch_size <= 0:
+        raise ValueError("worker_batch_size must be positive")
+
+    batch_models = batch_models or set()
+    model_ids_by_text = {str(model_id): model_id for model_id in registry.model_ids()}
+    unknown_batch_models = batch_models - set(model_ids_by_text)
+    if unknown_batch_models:
+        raise ValueError(f"Unknown batch models: {', '.join(sorted(unknown_batch_models))}")
+    for model_id in batch_models:
+        if not getattr(
+            registry.get(model_ids_by_text[model_id]).client,
+            "supports_batch",
+            False,
+        ):
+            raise ValueError(f"Model {model_id!r} is not configured with native_batch support")
 
     results_path.parent.mkdir(parents=True, exist_ok=True)
     records, completed = _load_completed(results_path)
     write_lock = asyncio.Lock()
     semaphores = {str(model_id): asyncio.Semaphore(concurrency) for model_id in registry.model_ids()}
 
-    async def evaluate(model_id: int | str, row: dict[str, Any], position: int) -> None:
+    def prepare(model_id: int | str, row: dict[str, Any], position: int):
         fingerprint = _question_fingerprint(str(row["question"]))
         key = (str(model_id), str(row["id"]), fingerprint)
         if key in completed:
-            return
+            return None
         spec = registry.get(model_id)
         record: dict[str, Any] = {
             "model_id": str(model_id),
@@ -523,44 +548,96 @@ async def run_benchmark(
             "completion_tokens": None,
             "total_tokens": None,
             "latency_ms": None,
+            "finish_reason": None,
         }
-        async with semaphores[str(model_id)]:
-            try:
-                response = await spec.client.generate(
-                    instruction=DEFAULT_INSTRUCTION,
-                    question=str(row["question"]),
-                    context={},
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
-                answer = extract_final_answer(response.text)
-                record.update(
-                    response=response.text,
-                    extracted_answer=answer,
-                    prompt_tokens=_usage_value(response.usage, "prompt_tokens", "input_tokens"),
-                    completion_tokens=_usage_value(response.usage, "completion_tokens", "output_tokens"),
-                    total_tokens=_usage_value(response.usage, "total_tokens"),
-                    latency_ms=response.latency_ms,
-                )
-            except Exception as exc:  # Keep a complete denominator when one endpoint fails.
-                record["error"] = f"{type(exc).__name__}: {exc}"
+        request = {
+            "instruction": DEFAULT_INSTRUCTION,
+            "question": str(row["question"]),
+            "context": {},
+            "max_tokens": (
+                spec.max_output_tokens or max_tokens
+                if use_model_output_limits
+                else max_tokens
+            ),
+            "temperature": temperature,
+        }
+        return key, spec, record, request
 
+    def apply_response(record: dict[str, Any], response: Any) -> None:
+        if isinstance(response, Exception):
+            record["error"] = f"{type(response).__name__}: {response}"
+            return
+        record.update(
+            response=response.text,
+            extracted_answer=extract_final_answer(response.text),
+            prompt_tokens=_usage_value(response.usage, "prompt_tokens", "input_tokens"),
+            completion_tokens=_usage_value(response.usage, "completion_tokens", "output_tokens"),
+            total_tokens=_usage_value(response.usage, "total_tokens"),
+            latency_ms=response.latency_ms,
+            finish_reason=response.finish_reason,
+        )
+
+    async def checkpoint(key: tuple[str, str, str], record: dict[str, Any]) -> None:
         async with write_lock:
             with results_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record, ensure_ascii=False) + "\n")
                 handle.flush()
+                os.fsync(handle.fileno())
             records.append(record)
             completed.add(key)
             print(
-                f"[{len(completed)}] {model_id} / {row['id']}: "
+                f"[{len(completed)}] {record['model_id']} / {record['example_id']}: "
                 f"{'error' if record['error'] else 'completed'}",
                 file=sys.stderr,
                 flush=True,
             )
 
-    await asyncio.gather(
-        *(evaluate(model_id, row, position) for model_id in registry.model_ids() for position, row in enumerate(dataset))
-    )
+    async def evaluate(model_id: int | str, row: dict[str, Any], position: int) -> None:
+        prepared = prepare(model_id, row, position)
+        if prepared is None:
+            return
+        key, spec, record, request = prepared
+        async with semaphores[str(model_id)]:
+            try:
+                response = await spec.client.generate(**request)
+            except Exception as exc:  # Keep a complete denominator when one endpoint fails.
+                response = exc
+        apply_response(record, response)
+        await checkpoint(key, record)
+
+    async def evaluate_batched_model(model_id: int | str) -> None:
+        pending = [
+            prepared
+            for position, row in enumerate(dataset)
+            if (prepared := prepare(model_id, row, position)) is not None
+        ]
+        for start in range(0, len(pending), worker_batch_size):
+            chunk = pending[start : start + worker_batch_size]
+            spec = registry.get(model_id)
+            try:
+                responses = await spec.client.generate_batch([item[3] for item in chunk])
+                if len(responses) != len(chunk):
+                    raise RuntimeError(
+                        f"batch returned {len(responses)} results for {len(chunk)} requests"
+                    )
+            except Exception as exc:
+                responses = [exc] * len(chunk)
+            for (key, _, record, _), response in zip(chunk, responses, strict=True):
+                apply_response(record, response)
+                await checkpoint(key, record)
+
+    ordinary = [
+        evaluate(model_id, row, position)
+        for model_id in registry.model_ids()
+        if str(model_id) not in batch_models
+        for position, row in enumerate(dataset)
+    ]
+    batched = [
+        evaluate_batched_model(model_id)
+        for model_id in registry.model_ids()
+        if str(model_id) in batch_models
+    ]
+    await asyncio.gather(*ordinary, *batched)
     return records
 
 
@@ -578,11 +655,39 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         help="Optional seeded dataset cap before creating the evaluation split.",
     )
+    parser.add_argument(
+        "--full-dataset",
+        action="store_true",
+        help="Evaluate the complete selected dataset instead of creating a train/test split.",
+    )
     parser.add_argument("--validation-samples", type=int, default=DEFAULT_VALIDATION_SAMPLES)
     parser.add_argument("--max-samples", type=int, help="Limit validation rows for a smoke run.")
+    parser.add_argument(
+        "--expect-samples",
+        type=int,
+        help="Fail before inference unless the selected evaluation set has exactly this many rows.",
+    )
     parser.add_argument("--max-tokens", type=int, default=4096)
+    parser.add_argument(
+        "--use-model-output-limits",
+        action="store_true",
+        help="Use each model's configured max_output_tokens instead of --max-tokens.",
+    )
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--concurrency", type=int, default=4, help="Concurrent requests per model endpoint.")
+    parser.add_argument(
+        "--batch-model",
+        action="append",
+        default=[],
+        metavar="MODEL_ID",
+        help="Use the provider Batch API for this model (repeatable; requires native_batch in YAML).",
+    )
+    parser.add_argument(
+        "--worker-batch-size",
+        type=int,
+        default=50_000,
+        help="Maximum questions per provider batch job.",
+    )
     parser.add_argument("--bootstrap-samples", type=int, default=10_000)
     parser.add_argument(
         "--judge",
@@ -616,15 +721,28 @@ async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
         raise ValueError("max-samples must be non-negative")
 
     registry = ModelRegistry.from_yaml_file(args.config)
-    split = build_conductor_splits(
-        args.dataset,
-        seed=args.seed,
-        total_samples=args.total_samples,
-        validation_samples=args.validation_samples,
-    )["test"]
+    if args.full_dataset:
+        split = load_conductor_dataset(
+            args.dataset,
+            seed=args.seed,
+            max_samples=args.total_samples,
+        )
+        split_name = "full dataset"
+    else:
+        split = build_conductor_splits(
+            args.dataset,
+            seed=args.seed,
+            total_samples=args.total_samples,
+            validation_samples=args.validation_samples,
+        )["test"]
+        split_name = "deterministic held-out evaluation subset"
     if args.max_samples is not None:
         split = split.select(range(min(args.max_samples, len(split))))
     dataset = [dict(row) for row in split]
+    if args.expect_samples is not None and len(dataset) != args.expect_samples:
+        raise ValueError(
+            f"Expected {args.expect_samples} evaluation samples, found {len(dataset)}"
+        )
 
     results_path = args.output_dir / "results.jsonl"
     records = await run_benchmark(
@@ -632,8 +750,11 @@ async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
         dataset=dataset,
         results_path=results_path,
         max_tokens=args.max_tokens,
+        use_model_output_limits=args.use_model_output_limits,
         temperature=args.temperature,
         concurrency=args.concurrency,
+        batch_models=set(args.batch_model),
+        worker_batch_size=args.worker_batch_size,
     )
     expected_ids = {str(model_id) for model_id in registry.model_ids()}
     selected_keys = {
@@ -673,12 +794,15 @@ async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
         )
     summary = {
         "dataset": args.dataset,
-        "split": "deterministic held-out evaluation subset",
+        "split": split_name,
         "seed": args.seed,
         "total_subset_samples": args.total_samples,
         "validation_samples": args.validation_samples,
         "evaluated_samples": len(dataset),
-        "max_tokens": args.max_tokens,
+        "max_tokens": None if args.use_model_output_limits else args.max_tokens,
+        "use_model_output_limits": args.use_model_output_limits,
+        "batch_models": args.batch_model,
+        "worker_batch_size": args.worker_batch_size if args.batch_model else None,
         "temperature": args.temperature,
         "judge_enabled": args.judge,
         "judge_model": args.judge_model if args.judge else None,

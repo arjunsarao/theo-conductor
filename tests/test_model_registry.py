@@ -61,6 +61,28 @@ models:
     assert spec.cost_per_1m_output_tokens == 5.5
 
 
+def test_openai_provider_uses_environment_api_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    config_file = tmp_path / "models.yaml"
+    config_file.write_text(
+        """
+models:
+  - model_idx: batched
+    provider: openai
+    client:
+      type: openai_compatible
+      base_url: https://api.openai.com/v1
+      model: gpt-test
+      native_batch: true
+""",
+    )
+
+    client = ModelRegistry.from_yaml_file(config_file).get("batched").client
+
+    assert client.supports_batch is True
+    assert client.client.api_key == "test-openai-key"
+
+
 def test_model_spec_rejects_negative_pricing():
     with pytest.raises(ValueError, match="must be non-negative"):
         ModelSpec(
@@ -91,8 +113,8 @@ def test_frontier_config_contains_requested_openrouter_models_and_pricing():
         model_id: registry.get(model_id).max_output_tokens
         for model_id in registry.model_ids()
     } == {
-        "gpt-5.5": 16_384,
-        "claude-opus-4.8": 40_960,
+        "gpt-5.5": 32_768,
+        "claude-opus-4.8": 65_536,
         "gemini-3.7-flash": 12_288,
         "glm-5.3": 65_536,
         "kimi-k3": 32_768,
@@ -104,6 +126,15 @@ def test_frontier_config_contains_requested_openrouter_models_and_pricing():
         and registry.get(model_id).best_for
         and registry.get(model_id).useful_for
         and registry.get(model_id).routing_note
+        for model_id in registry.model_ids()
+    )
+    assert {
+        model_id
+        for model_id in registry.model_ids()
+        if registry.get(model_id).client.supports_batch
+    } == {"gpt-5.5", "claude-opus-4.8", "gemini-3.7-flash", "kimi-k3"}
+    assert all(
+        registry.get(model_id).client.batch_backend == "openrouter"
         for model_id in registry.model_ids()
     )
 
