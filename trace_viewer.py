@@ -27,18 +27,20 @@ from theo_conductor.trace_analysis import (
     error_category,
     workflow_to_graphviz,
 )
-from theo_conductor.benchmark import oracle_routing_breakdown
 from theo_conductor.hle_benchmark_view import (
+    capability_comparison,
+    clarification_rows,
+    discover_hle_direct_benchmarks,
     discover_hle_benchmark_runs,
     hle_run_metrics,
     load_hle_benchmark as load_hle_benchmark_files,
+    pairwise_outcome_counts,
+    result_outcome,
     worker_step_rows,
 )
 
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_MEGASCIENCE_DIR = ROOT / "outputs/megascience-small-models"
-TRACE_FILENAME = "plans-and-worker-outputs-rank-0.jsonl"
 PAGE_SIZE = 80
 MEMORY_CHART_MAX_ROWS = 4_000
 GPU_ROLES = {
@@ -103,6 +105,47 @@ st.markdown(
     }
     .hle-card-marker {
         display: none;
+    }
+    div[class*="st-key-capability-cell-"] {
+        margin-bottom: 0.42rem;
+    }
+    div[class*="st-key-capability-cell-"] button {
+        border: 1px solid transparent;
+        border-radius: 0.52rem;
+        font-size: 0.88rem;
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+        height: 2.35rem;
+        min-height: 2.35rem;
+        padding: 0;
+        transition: transform 80ms ease, box-shadow 80ms ease;
+        width: 100%;
+    }
+    div[class*="st-key-capability-cell-"] button:hover {
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.18);
+        transform: translateY(-1px);
+    }
+    div[class*="st-key-capability-cell-retained-"] button { background: #d9ebfa; color: #174a75; }
+    div[class*="st-key-capability-cell-gained-"] button { background: #d4f1e3; color: #176044; }
+    div[class*="st-key-capability-cell-regressed-"] button { background: #f9dadd; color: #9e3440; }
+    div[class*="st-key-capability-cell-unsolved-"] button { background: #e9edf2; color: #64748b; }
+    div[class*="st-key-capability-cell-"] button[data-testid="stBaseButton-primary"] {
+        border-color: #111827;
+        box-shadow: 0 0 0 2px #111827;
+    }
+    .capability-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.65rem 1rem;
+        margin-bottom: 0.5rem;
+    }
+    .capability-swatch {
+        border-radius: 0.3rem;
+        display: inline-block;
+        height: 0.9rem;
+        margin-right: 0.35rem;
+        vertical-align: -0.08rem;
+        width: 0.9rem;
     }
     </style>
     """,
@@ -414,25 +457,21 @@ def gpu_pressure_statistics(
 
 
 def discover_trace_runs(root: Path = ROOT) -> dict[str, tuple[Path, ...]]:
-    """Discover both GRPO traces and frozen planning-only workflow runs."""
+    """Discover HLE plan sets following the ``*-plans-*`` convention."""
     traces: dict[str, tuple[Path, ...]] = {}
-    for output_dir in (root / "outputs").glob("grpo-*"):
-        job_id = output_dir.name.removeprefix("grpo-")
-        path = output_dir / "traces" / TRACE_FILENAME
-        if job_id.isdigit() and path.is_file():
-            traces[f"GRPO {job_id}"] = (path,)
-    for output_dir in (root / "outputs").glob("hle-plans-*"):
-        run_id = output_dir.name.removeprefix("hle-plans-")
+    output_root = root / "outputs"
+    if not output_root.is_dir():
+        return traces
+    for output_dir in output_root.iterdir():
+        if not output_dir.is_dir() or "-plans-" not in output_dir.name:
+            continue
         path = output_dir / "plans.jsonl"
         if path.is_file():
-            traces[f"HLE plans {run_id}"] = (path,)
+            traces[output_dir.name] = (path,)
             continue
         rollout_paths = tuple(sorted(output_dir.glob("rollout-*/plans.jsonl")))
         if rollout_paths:
-            traces[f"HLE plans {run_id} ({len(rollout_paths)} rollouts/question)"] = rollout_paths
-    physics_path = root / "outputs" / "hle-physics" / "plans.jsonl"
-    if physics_path.is_file():
-        traces["HLE physics"] = (physics_path,)
+            traces[f"{output_dir.name} ({len(rollout_paths)} rollouts/question)"] = rollout_paths
     return traces
 
 
@@ -441,8 +480,7 @@ def selected_dataset() -> tuple[TraceDataset, str, str]:
 
     if not traces:
         st.info(
-            "No runs found under outputs/grpo-*/traces, outputs/hle-plans-*/plans.jsonl, "
-            "or outputs/hle-physics/plans.jsonl."
+            "No HLE plan runs matching outputs/*-plans-*/ were found."
         )
         st.stop()
 
@@ -1141,6 +1179,83 @@ def render_plan(plan: Any) -> None:
             st.markdown(f"Access: {accesses}")
 
 
+def render_clarification_requests(output: dict[str, Any]) -> None:
+    """Render request_clarification calls attached to one worker response."""
+    calls = [
+        call
+        for call in output.get("tool_calls") or []
+        if isinstance(call, dict) and call.get("name") == "request_clarification"
+    ]
+    if not calls:
+        return
+
+    st.markdown(f"#### Clarification request{'s' if len(calls) != 1 else ''}")
+    for index, call in enumerate(calls, 1):
+        arguments = call.get("arguments") or {}
+        result = call.get("result") or {}
+        impact = str(arguments.get("impact_if_unanswered") or "unknown")
+        blocking = arguments.get("blocking") is True
+        is_error = call.get("is_error") is True
+        answered = result.get("answered") is True
+        status = "Failed" if is_error else ("Answered" if answered else "Unanswered")
+        icon = "🔴" if is_error else ("🟢" if answered else "🟡")
+        label = str(arguments.get("question") or f"Clarification {index}")
+        with st.container(border=True):
+            st.markdown(f"**{icon} {label}**")
+            tags = [status, f"{impact} impact", "blocking" if blocking else "non-blocking"]
+            if arguments.get("needed_by"):
+                tags.append(f'needed by: {arguments["needed_by"]}')
+            st.caption(" · ".join(tags))
+            if arguments.get("reason"):
+                st.markdown("**Why clarification was needed**")
+                st.write(str(arguments["reason"]))
+
+            options = arguments.get("options") or []
+            if options:
+                recommended = arguments.get("recommended_option")
+                selected = result.get("selected_option")
+                option_rows = []
+                for option in options:
+                    if not isinstance(option, dict):
+                        continue
+                    option_id = option.get("id")
+                    option_rows.append(
+                        {
+                            "Option": option_id,
+                            "Description": option.get("description"),
+                            "Recommended": "✓" if option_id == recommended else "",
+                            "Selected": "✓" if option_id == selected else "",
+                        }
+                    )
+                if option_rows:
+                    st.dataframe(pd.DataFrame(option_rows), width="stretch", hide_index=True)
+
+            if is_error:
+                st.error(f'Clarification failed: {result.get("error") or "Unknown tool error"}')
+            elif answered:
+                st.success(str(result.get("answer") or "Clarification answered without answer text."))
+                if result.get("reasoning"):
+                    with st.expander("Resolver reasoning"):
+                        st.write(str(result["reasoning"]))
+            else:
+                st.warning("No clarification answer was recorded.")
+
+            usage = call.get("usage") or {}
+            details = []
+            if call.get("model_id"):
+                details.append(f'resolver: {call["model_id"]}')
+            if result.get("source"):
+                details.append(f'source: {result["source"]}')
+            if call.get("duration_ms") is not None:
+                details.append(f'{float(call["duration_ms"]) / 1000:.1f} s')
+            if usage.get("total_tokens") is not None:
+                details.append(f'{int(usage["total_tokens"]):,} tokens')
+            if usage.get("estimated_cost_usd") is not None:
+                details.append(f'${float(usage["estimated_cost_usd"]):.4f}')
+            if details:
+                st.caption(" · ".join(details))
+
+
 def render_record(record: TraceRecord, error_styles: dict[str, tuple[str, str]]) -> None:
     data = record.data
     title = str(data.get("question") or "Question unavailable")
@@ -1192,6 +1307,7 @@ def render_record(record: TraceRecord, error_styles: dict[str, tuple[str, str]])
                     metadata.append(f'${float(usage["estimated_cost_usd"]):.6f} estimated cost')
                 if metadata:
                     st.caption(" · ".join(metadata))
+                render_clarification_requests(output)
                 st.code(output.get("text") or json.dumps(output, indent=2, ensure_ascii=False))
         with answers_tab:
             st.markdown("**Final answer**")
@@ -1203,8 +1319,8 @@ def render_record(record: TraceRecord, error_styles: dict[str, tuple[str, str]])
 
 
 def render_trace_analysis_page() -> None:
-    st.title("`theo-conductor` trace analysis")
-    st.caption("Inspect reward cohorts, validation failures, conductor plans, and worker responses.")
+    st.title("Plans")
+    st.caption("Inspect conductor plans, workflow DAGs, validation failures, and model routing.")
 
     try:
         dataset, source_name, telemetry_source = selected_dataset()
@@ -1247,8 +1363,14 @@ def _percent(value: Any) -> str:
 
 
 def render_megascience_record(record: dict[str, Any]) -> None:
-    outcome = "Request failed" if record.get("error") else ("Correct" if record.get("correct") else "Incorrect")
-    icon = "🟢" if record.get("correct") else ("🔴" if record.get("error") else "🟠")
+    result = result_outcome(record)
+    outcome = {
+        "correct": "Correct",
+        "incorrect": "Incorrect",
+        "failed": "Failed",
+        "unjudged": "Unjudged",
+    }[result]
+    icon = {"correct": "🟢", "incorrect": "🟠", "failed": "⚫", "unjudged": "🟡"}[result]
     question = str(record.get("question") or "Question unavailable")
     with st.expander(
         f'{icon} **{outcome}** · {record.get("display_name") or record.get("model_id")} · '
@@ -1273,7 +1395,9 @@ def render_megascience_record(record: dict[str, Any]) -> None:
             st.markdown("**Reference answer**")
             st.markdown(str(record.get("reference_answer") or record.get("gold_answer") or "—"))
         if record.get("judge_reason"):
-            st.info(f'Kimi judge: {record["judge_reason"]}')
+            st.info(f'{record.get("judge_model") or "Judge"}: {record["judge_reason"]}')
+        if record.get("judge_error"):
+            st.warning(f'Judge error: {record["judge_error"]}')
         if record.get("error"):
             st.error(str(record["error"]))
         with st.expander("Full model response"):
@@ -1282,235 +1406,723 @@ def render_megascience_record(record: dict[str, Any]) -> None:
             st.markdown(str(record.get("gold_answer") or "—"))
 
 
-def render_megascience_page() -> None:
-    st.title("Small models on MegaScience")
-    st.caption("Compare the local worker models on the shared deterministic MegaScience validation set.")
-
-    summary_path = DEFAULT_MEGASCIENCE_DIR / "summary.json"
-    results_path = DEFAULT_MEGASCIENCE_DIR / "results.jsonl"
-    try:
-        summary, records = load_megascience(
-            str(summary_path),
-            str(results_path),
-            (summary_path.stat().st_mtime_ns, results_path.stat().st_mtime_ns),
-        )
-    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
-        st.error(f"Could not load the MegaScience benchmark: {exc}")
-        st.stop()
-
-    models = summary.get("models") or {}
-    expected = int(summary.get("evaluated_samples") or 0) * len(models)
-    correct = sum(bool(record.get("correct")) for record in records)
-    request_failures = sum(record.get("error") is not None for record in records)
-    extraction_failures = sum(
-        record.get("error") is None and record.get("extracted_answer") is None for record in records
+def _accuracy_comparison_chart(rows: list[dict[str, Any]]) -> alt.Chart:
+    frame = pd.DataFrame(rows)
+    base = alt.Chart(frame).encode(
+        y=alt.Y("Name:N", title=None, sort=alt.SortField("Accuracy", order="descending")),
+        tooltip=[
+            alt.Tooltip("Name:N"),
+            alt.Tooltip("Type:N"),
+            alt.Tooltip("Accuracy:Q", format=".1%"),
+            alt.Tooltip("CI low:Q", title="95% CI low", format=".1%"),
+            alt.Tooltip("CI high:Q", title="95% CI high", format=".1%"),
+            alt.Tooltip("Correct:Q", format=",d"),
+            alt.Tooltip("Questions:Q", format=",d"),
+        ],
     )
-    oracle = oracle_routing_breakdown(records)
-    oracle_correct = oracle["solved_questions"]
-    oracle_accuracy = (
-        oracle_correct / oracle["questions"] if oracle["questions"] else None
-    )
-
-    headline = st.columns(6)
-    for column, (value, label) in zip(
-        headline,
-        (
-            (f"{len(models)}", "Models"),
-            (f'{summary.get("evaluated_samples", 0):,}', "Questions / model"),
-            (f"{len(records):,} / {expected:,}", "Completed calls"),
-            (_percent(correct / len(records) if records else None), "Overall accuracy"),
-            (_percent(oracle_accuracy), "Oracle success rate"),
-            (f"{request_failures:,}", "Request failures"),
+    bars = base.mark_bar(cornerRadiusEnd=5, height=22).encode(
+        x=alt.X("Accuracy:Q", title="Accuracy", scale=alt.Scale(domain=[0, 0.65]), axis=alt.Axis(format="%")),
+        color=alt.Color(
+            "Type:N",
+            title=None,
+            scale=alt.Scale(
+                domain=["Direct benchmark", "Conductor evaluation"],
+                range=["#277da1", "#e87817"],
+            ),
         ),
-        strict=True,
-    ):
-        column.metric(label, value)
-    st.caption(
-        f'{summary.get("dataset", "MegaScience")} · {summary.get("split", "validation")} · '
-        f'seed {summary.get("seed", "—")} · temperature {summary.get("temperature", "—")} · '
-        f'{summary.get("max_tokens", "—")} max output tokens'
+    )
+    intervals = base.mark_rule(color="#202124", strokeWidth=2).encode(
+        x=alt.X("CI low:Q"),
+        x2=alt.X2("CI high:Q"),
+    )
+    labels = base.mark_text(align="left", dx=5, fontWeight="bold").encode(
+        x=alt.X("Accuracy:Q"),
+        text=alt.Text("Accuracy:Q", format=".1%"),
+    )
+    return (bars + intervals + labels).properties(height=max(180, 48 * len(rows)))
+
+
+def _outcome_comparison_chart(rows: list[dict[str, Any]]) -> alt.Chart:
+    return (
+        alt.Chart(pd.DataFrame(rows))
+        .mark_bar(cornerRadius=3)
+        .encode(
+            x=alt.X("Count:Q", stack="normalize", title="Share of questions", axis=alt.Axis(format="%")),
+            y=alt.Y("Name:N", title=None),
+            color=alt.Color(
+                "Outcome:N",
+                title=None,
+                scale=alt.Scale(
+                    domain=["Correct", "Incorrect", "Failed", "Unjudged"],
+                    range=["#318260", "#c94848", "#000000", "#e9c46a"],
+                ),
+            ),
+            order=alt.Order("Order:Q"),
+            tooltip=["Name:N", "Outcome:N", alt.Tooltip("Count:Q", format=",d")],
+        )
+        .properties(height=max(180, 48 * len({row["Name"] for row in rows})))
     )
 
-    comparison_rows = []
-    subject_rows = []
-    for model_id, metrics in models.items():
-        ci = metrics.get("accuracy_95_ci") or [None, None]
-        name = metrics.get("display_name") or model_id
+
+def _render_pairwise_comparison(
+    labels_to_records: dict[str, list[dict[str, Any]]],
+    *,
+    key_prefix: str,
+) -> None:
+    labels = list(labels_to_records)
+    if len(labels) < 2:
+        return
+    default_left = next((index for index, label in enumerate(labels) if "Opus" in label), 0)
+    default_right = next((index for index, label in enumerate(labels) if "GPT-6" in label), 1)
+    if default_right == default_left:
+        default_right = (default_left + 1) % len(labels)
+    selectors = st.columns(2)
+    left_label = selectors[0].selectbox("Left", labels, index=default_left, key=f"{key_prefix}-left")
+    right_label = selectors[1].selectbox("Right", labels, index=default_right, key=f"{key_prefix}-right")
+    if left_label == right_label:
+        st.info("Choose two different runs for a pairwise comparison.")
+        return
+
+    counts = pairwise_outcome_counts(labels_to_records[left_label], labels_to_records[right_label])
+    rows = [
+        {
+            "Kind": outcome,
+            "Outcome": {
+                "Left only": f"{left_label} only",
+                "Right only": f"{right_label} only",
+                "Left failed": f"{left_label} failed",
+                "Right failed": f"{right_label} failed",
+            }.get(outcome, outcome),
+            "Count": count,
+        }
+        for outcome, count in counts.items()
+    ]
+    chart = (
+        alt.Chart(pd.DataFrame(rows))
+        .mark_arc(innerRadius=55, outerRadius=105)
+        .encode(
+            theta=alt.Theta("Count:Q"),
+            color=alt.Color(
+                "Kind:N",
+                title=None,
+                scale=alt.Scale(
+                    domain=[
+                        "Both correct",
+                        "Left only",
+                        "Right only",
+                        "Both incorrect",
+                        "Left failed",
+                        "Right failed",
+                        "Both failed",
+                        "Unjudged",
+                    ],
+                    range=[
+                        "#318260",
+                        "#277da1",
+                        "#e87817",
+                        "#c94848",
+                        "#6c5ce7",
+                        "#9b5de5",
+                        "#000000",
+                        "#e9c46a",
+                    ],
+                ),
+            ),
+            tooltip=["Outcome:N", alt.Tooltip("Count:Q", format=",d")],
+        )
+        .properties(height=270)
+    )
+    st.altair_chart(chart, width="stretch")
+    matched = sum(counts.values())
+    disagreements = counts["Left only"] + counts["Right only"]
+    failures = counts["Left failed"] + counts["Right failed"] + counts["Both failed"]
+    st.caption(
+        f"{matched:,} matched questions · {disagreements:,} disagreements · "
+        f"{left_label} wins {counts['Left only']:,} · {right_label} wins {counts['Right only']:,} · "
+        f"{failures:,} with failures."
+    )
+
+
+def _friendly_evaluation_name(run_name: str) -> str:
+    names = {
+        "gpt-6-eval-frontier": "GPT-6 · frontier evaluation",
+        "gpt-6-eval-frontier-clarification": "GPT-6 · frontier + clarification",
+        "qwen-3-8-eval-frontier": "Qwen 3.8 · frontier evaluation",
+        "qwen-3-8-eval-flash": "Qwen 3.8 · flash evaluation",
+    }
+    return names.get(run_name, run_name)
+
+
+def _load_benchmark_entries(*, evaluations_only: bool) -> dict[str, dict[str, Any]]:
+    """Load direct and conductor HLE runs into one comparison shape."""
+    entries: dict[str, dict[str, Any]] = {}
+    for run_name, (summary_path, results_path) in discover_hle_direct_benchmarks(ROOT).items():
+        try:
+            summary, records = load_megascience(
+                str(summary_path),
+                str(results_path),
+                (summary_path.stat().st_mtime_ns, results_path.stat().st_mtime_ns),
+            )
+            model_id, model_metrics = next(iter((summary.get("models") or {}).items()))
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError, StopIteration) as exc:
+            st.warning(f"Skipped {run_name}: {exc}")
+            continue
+        label = str(model_metrics.get("display_name") or model_id)
+        entries[label] = {
+            "kind": "Direct benchmark",
+            "run_name": run_name,
+            "summary": summary,
+            "records": records,
+            "model_metrics": model_metrics,
+        }
+
+    for run_name, (summary_path, results_path) in discover_hle_benchmark_runs(ROOT).items():
+        if evaluations_only and "-eval-" not in run_name:
+            continue
+        try:
+            summary, records = load_hle_benchmark_page(
+                str(summary_path),
+                str(results_path),
+                (summary_path.stat().st_mtime_ns, results_path.stat().st_mtime_ns),
+            )
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            st.warning(f"Skipped {run_name}: {exc}")
+            continue
+        label = _friendly_evaluation_name(run_name)
+        entries[label] = {
+            "kind": "Conductor evaluation",
+            "run_name": run_name,
+            "summary": summary,
+            "records": records,
+            "model_metrics": (summary.get("models") or {}).get("theo-conductor") or {},
+        }
+    return entries
+
+
+def render_comparisons_page() -> None:
+    st.title("Comparisons")
+    st.caption(
+        "Compare direct-model benchmarks and conductor evaluations on the same 202 HLE Physics questions."
+    )
+
+    entries: dict[str, dict[str, Any]] = {}
+    for run_name, (summary_path, results_path) in discover_hle_direct_benchmarks(ROOT).items():
+        try:
+            summary, records = load_megascience(
+                str(summary_path),
+                str(results_path),
+                (summary_path.stat().st_mtime_ns, results_path.stat().st_mtime_ns),
+            )
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            st.warning(f"Skipped {run_name}: {exc}")
+            continue
+        model_id, model_metrics = next(iter((summary.get("models") or {}).items()))
+        label = str(model_metrics.get("display_name") or model_id)
+        entries[label] = {
+            "kind": "Direct benchmark",
+            "run_name": run_name,
+            "summary": summary,
+            "records": records,
+            "model_metrics": model_metrics,
+        }
+
+    evaluation_runs = {
+        name: paths
+        for name, paths in discover_hle_benchmark_runs(ROOT).items()
+        if "-eval-" in name
+    }
+    for run_name, (summary_path, results_path) in evaluation_runs.items():
+        try:
+            summary, records = load_hle_benchmark_page(
+                str(summary_path),
+                str(results_path),
+                (summary_path.stat().st_mtime_ns, results_path.stat().st_mtime_ns),
+            )
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            st.warning(f"Skipped {run_name}: {exc}")
+            continue
+        label = _friendly_evaluation_name(run_name)
+        entries[label] = {
+            "kind": "Conductor evaluation",
+            "run_name": run_name,
+            "summary": summary,
+            "records": records,
+            "model_metrics": (summary.get("models") or {}).get("theo-conductor") or {},
+        }
+
+    if not entries:
+        st.info("No outputs/*-benchmark or outputs/*-eval-* runs were found.")
+        return
+
+    labels = sorted(entries)
+    selected_labels = st.sidebar.multiselect("Runs", labels, default=labels)
+    if not selected_labels:
+        st.info("Select at least one run to compare.")
+        return
+
+    comparison_rows: list[dict[str, Any]] = []
+    outcome_rows: list[dict[str, Any]] = []
+    routing_rows: list[dict[str, Any]] = []
+    clarification_activity: list[dict[str, Any]] = []
+    labels_to_records: dict[str, list[dict[str, Any]]] = {}
+    combined_records: list[dict[str, Any]] = []
+    for label in selected_labels:
+        entry = entries[label]
+        records = entry["records"]
+        model_metrics = entry["model_metrics"]
+        outcomes = [result_outcome(record) for record in records]
+        correct = outcomes.count("correct")
+        incorrect = outcomes.count("incorrect")
+        failed = outcomes.count("failed")
+        unjudged = outcomes.count("unjudged")
+        scored = correct + incorrect
+        accuracy = correct / scored if scored else None
+        ci = (
+            model_metrics.get("accuracy_95_ci") or [None, None]
+            if scored == len(records)
+            else [None, None]
+        )
+
+        if entry["kind"] == "Conductor evaluation":
+            metrics = hle_run_metrics(records)
+            clarification_activity.extend(
+                {**row, "Name": label} for row in clarification_rows(records)
+            )
+            mean_time = (
+                float(metrics["mean_runtime_ms"]) / 1000
+                if metrics["mean_runtime_ms"] is not None
+                else None
+            )
+            workflow_tokens = []
+            for record in records:
+                total = sum(
+                    float((output.get("usage") or {}).get("total_tokens") or 0)
+                    for output in (record.get("worker_outputs") or {}).values()
+                    if isinstance(output, dict)
+                )
+                if total:
+                    workflow_tokens.append(total)
+            mean_tokens = sum(workflow_tokens) / len(workflow_tokens) if workflow_tokens else None
+            for row in worker_step_rows(records):
+                routing_rows.append(
+                    {
+                        "Name": label,
+                        "Worker": str(row.get("model_id") or "unknown"),
+                        "Calls": 1,
+                    }
+                )
+        else:
+            mean_time = (
+                float(model_metrics.get("mean_latency_ms")) / 1000
+                if model_metrics.get("mean_latency_ms") is not None
+                else None
+            )
+            mean_tokens = model_metrics.get("mean_total_tokens")
+
         comparison_rows.append(
             {
-                "Model": name,
-                "Accuracy": metrics.get("accuracy"),
-                "95% CI low": ci[0],
-                "95% CI high": ci[1],
-                "Correct": metrics.get("correct"),
-                "Questions": metrics.get("questions"),
-                "Missing FINAL": metrics.get("answer_extraction_failures"),
-                "Mean latency (s)": float(metrics.get("mean_latency_ms") or 0) / 1000,
-                "Mean tokens": metrics.get("mean_total_tokens"),
+                "Name": label,
+                "Type": entry["kind"],
+                "Accuracy": accuracy,
+                "CI low": ci[0],
+                "CI high": ci[1],
+                "Correct": correct,
+                "Questions": len(records),
+                "Mean time (s)": mean_time,
+                "Mean tokens": mean_tokens,
             }
         )
-        for subject, values in (metrics.get("by_subject") or {}).items():
-            subject_rows.append(
-                {"Model": name, "Subject": subject, "Accuracy": values.get("accuracy"), "Questions": values.get("questions")}
+        for order, (outcome, count) in enumerate(
+            (("Correct", correct), ("Incorrect", incorrect), ("Failed", failed), ("Unjudged", unjudged))
+        ):
+            outcome_rows.append(
+                {"Name": label, "Outcome": outcome, "Count": count, "Order": order}
             )
-
-    st.subheader("Model comparison")
-    comparison = pd.DataFrame(comparison_rows)
-    if not comparison.empty:
-        st.dataframe(
-            comparison,
-            width="stretch",
-            hide_index=True,
-            column_config={
-                "Accuracy": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1),
-                "95% CI low": st.column_config.NumberColumn(format="%.1%%"),
-                "95% CI high": st.column_config.NumberColumn(format="%.1%%"),
-                "Mean latency (s)": st.column_config.NumberColumn(format="%.2f"),
-                "Mean tokens": st.column_config.NumberColumn(format="%.0f"),
-            },
-        )
-        resource_rows = comparison.melt(
-            id_vars=["Model"],
-            value_vars=["Mean latency (s)", "Mean tokens"],
-            var_name="Metric",
-            value_name="Value",
-        )
-        latency_tab, subject_tab = st.tabs(("Cost per answer", "Accuracy by subject"))
-        with latency_tab:
-            st.altair_chart(
-                alt.Chart(resource_rows)
-                .mark_bar(cornerRadiusEnd=4)
-                .encode(
-                    x=alt.X("Value:Q", title=None),
-                    y=alt.Y("Model:N", title=None, sort="-x"),
-                    color=alt.Color("Model:N", legend=None),
-                    tooltip=["Model:N", "Metric:N", alt.Tooltip("Value:Q", format=",.2f")],
-                    column=alt.Column("Metric:N", title=None, spacing=30),
-                )
-                .properties(height=170)
-                .resolve_scale(x="independent"),
-                width="stretch",
-            )
-        with subject_tab:
-            if subject_rows:
-                st.altair_chart(
-                    alt.Chart(pd.DataFrame(subject_rows))
-                    .mark_rect(cornerRadius=3)
-                    .encode(
-                        x=alt.X("Subject:N", title=None),
-                        y=alt.Y("Model:N", title=None),
-                        color=alt.Color("Accuracy:Q", scale=alt.Scale(domain=[0, 1], scheme="redyellowgreen")),
-                        tooltip=["Model:N", "Subject:N", alt.Tooltip("Accuracy:Q", format=".1%"), "Questions:Q"],
-                    )
-                    .properties(height=170),
-                    width="stretch",
-                )
-
-    st.subheader("Oracle model choices")
-    oracle_rows = pd.DataFrame(
-        [
-            {
-                "Model": row["display_name"],
-                "Oracle selection credit": row["oracle_selection_credit"],
-                "Share": row["oracle_selection_share"],
-            }
-            for row in oracle["models"]
+        tagged = [
+            {**record, "_comparison_name": label, "_comparison_kind": entry["kind"]}
+            for record in records
         ]
+        labels_to_records[label] = tagged
+        combined_records.extend(tagged)
+
+    best = max(comparison_rows, key=lambda row: float(row["Accuracy"] or 0))
+    summary_columns = st.columns(3)
+    summary_columns[0].metric("Runs compared", len(comparison_rows))
+    summary_columns[1].metric(
+        "Matched question set", f"{min(row['Questions'] for row in comparison_rows):,}"
     )
-    if oracle_rows.empty:
-        st.caption("No question was answered correctly by any model.")
-    else:
-        table_column, chart_column = st.columns((1, 1))
-        with table_column:
-            st.dataframe(
-                oracle_rows,
-                width="stretch",
-                hide_index=True,
-                column_config={
-                    "Oracle selection credit": st.column_config.NumberColumn(format="%.2f"),
-                    "Share": st.column_config.ProgressColumn(
-                        format="percent", min_value=0, max_value=1
+    summary_columns[2].metric("Best accuracy", _percent(best["Accuracy"]))
+    summary_columns[2].caption(best["Name"])
+
+    chart_columns = st.columns(2)
+    with chart_columns[0]:
+        st.subheader("Accuracy")
+        st.altair_chart(_accuracy_comparison_chart(comparison_rows), width="stretch")
+    with chart_columns[1]:
+        st.subheader("Outcome mix")
+        st.altair_chart(_outcome_comparison_chart(outcome_rows), width="stretch")
+
+    resource_rows = pd.DataFrame(comparison_rows).melt(
+        id_vars=["Name", "Type"],
+        value_vars=["Mean time (s)", "Mean tokens"],
+        var_name="Metric",
+        value_name="Value",
+    )
+    st.subheader("Inference profile")
+    st.altair_chart(
+        alt.Chart(resource_rows.dropna(subset=["Value"]))
+        .mark_bar(cornerRadiusEnd=5)
+        .encode(
+            x=alt.X("Value:Q", title=None),
+            y=alt.Y("Name:N", title=None, sort="-x"),
+            color=alt.Color("Type:N", title=None),
+            tooltip=["Name:N", "Type:N", "Metric:N", alt.Tooltip("Value:Q", format=",.1f")],
+            column=alt.Column("Metric:N", title=None, spacing=35),
+        )
+        .properties(height=max(180, 34 * len(comparison_rows)))
+        .resolve_scale(x="independent"),
+        width="stretch",
+    )
+    st.caption(
+        "Evaluation time covers a complete worker workflow; direct-model time covers one model response. "
+        "Batch-job wall time is not directly comparable with ordinary request latency."
+    )
+
+    if routing_rows:
+        st.subheader("Evaluation worker routing")
+        routing = (
+            pd.DataFrame(routing_rows)
+            .groupby(["Name", "Worker"], as_index=False)["Calls"]
+            .sum()
+        )
+        st.altair_chart(
+            alt.Chart(routing)
+            .mark_bar(cornerRadius=3)
+            .encode(
+                x=alt.X("Calls:Q", stack="normalize", title="Share of worker calls", axis=alt.Axis(format="%")),
+                y=alt.Y("Name:N", title=None),
+                color=alt.Color("Worker:N", title="Worker model"),
+                tooltip=["Name:N", "Worker:N", alt.Tooltip("Calls:Q", format=",d")],
+            )
+            .properties(height=max(150, 50 * len({row['Name'] for row in routing_rows}))),
+            width="stretch",
+        )
+
+    if clarification_activity:
+        st.subheader("Clarification activity")
+        clarification_frame = pd.DataFrame(clarification_activity)
+        clarification_frame["Status"] = clarification_frame.apply(
+            lambda row: (
+                "Failed"
+                if row["is_error"]
+                else ("Answered" if row["answered"] else "Unanswered")
+            ),
+            axis=1,
+        )
+        workflows_asking = clarification_frame[
+            ["Name", "example_id", "benchmark_position"]
+        ].drop_duplicates().shape[0]
+        headline = st.columns(4)
+        headline[0].metric("Requests", f"{len(clarification_frame):,}")
+        headline[1].metric("Workflows asking", f"{workflows_asking:,}")
+        headline[2].metric(
+            "Answered", f"{int(clarification_frame['answered'].sum()):,}"
+        )
+        headline[3].metric(
+            "Failed", f"{int(clarification_frame['is_error'].sum()):,}"
+        )
+        status_colors = {
+            "Answered": "#318260",
+            "Unanswered": "#e9c46a",
+            "Failed": "#c94848",
+        }
+        st.altair_chart(
+            alt.Chart(clarification_frame)
+            .mark_bar(cornerRadius=3)
+            .encode(
+                x=alt.X("count():Q", title="Clarification requests"),
+                y=alt.Y("Name:N", title=None),
+                color=alt.Color(
+                    "Status:N",
+                    title=None,
+                    scale=alt.Scale(
+                        domain=list(status_colors),
+                        range=list(status_colors.values()),
                     ),
-                },
+                ),
+                order=alt.Order("Status:N"),
+                tooltip=[
+                    "Name:N",
+                    "Status:N",
+                    alt.Tooltip("count():Q", title="Requests", format=",d"),
+                ],
             )
-        with chart_column:
-            st.altair_chart(
-                alt.Chart(oracle_rows)
-                .mark_arc(innerRadius=42)
-                .encode(
-                    theta=alt.Theta("Oracle selection credit:Q"),
-                    color=alt.Color("Model:N", title=None),
-                    tooltip=[
-                        "Model:N",
-                        alt.Tooltip("Oracle selection credit:Q", format=".2f"),
-                        alt.Tooltip("Share:Q", format=".1%"),
-                    ],
-                )
-                .properties(height=230),
-                width="stretch",
+            .properties(height=max(120, 48 * clarification_frame["Name"].nunique())),
+            width="stretch",
+        )
+        impact_counts = (
+            clarification_frame.assign(
+                Impact=clarification_frame["impact_if_unanswered"].fillna("unknown"),
+                Blocking=clarification_frame["blocking"].map(
+                    {True: "Blocking", False: "Non-blocking"}
+                ),
             )
-        st.caption(
-            f'Based on {oracle["solved_questions"]:,} oracle-solvable questions. '
-            f'When multiple models are correct, the question is split evenly between them '
-            f'({oracle["tied_questions"]:,} tied questions).'
+            .groupby(["Name", "Impact", "Blocking"], as_index=False)
+            .size()
+            .rename(columns={"size": "Requests"})
         )
+        st.dataframe(impact_counts, width="stretch", hide_index=True)
 
-    if correct == 0 and records:
-        st.warning(
-            "The saved evaluator marked every answer incorrect. Use the answer browser below to compare extracted and reference answers; correctness reflects the stored benchmark labels."
-        )
+    st.subheader("Head-to-head questions")
+    _render_pairwise_comparison(labels_to_records, key_prefix="comparison-pair")
 
-    st.subheader("Answer browser")
-    all_models = sorted({str(record.get("display_name") or record.get("model_id")) for record in records})
-    all_subjects = sorted({str(record.get("subject") or "unknown") for record in records})
-    filters = st.columns((2, 1, 1, 2))
-    selected_models = filters[0].multiselect("Models", all_models, placeholder="All models")
-    selected_subjects = filters[1].multiselect("Subjects", all_subjects, placeholder="All subjects")
-    selected_outcome = filters[2].selectbox("Outcome", ("All", "Correct", "Incorrect", "Missing FINAL", "Request failed"))
-    search = filters[3].text_input("Search questions and answers")
+    st.subheader("Question browser")
+    filters = st.columns((2, 1, 3))
+    browser_labels = filters[0].multiselect(
+        "Runs", selected_labels, default=selected_labels, key="comparison-browser-runs"
+    )
+    selected_outcome = filters[1].selectbox(
+        "Outcome",
+        ("All", "Correct", "Incorrect", "Missing FINAL", "Failed", "Clarification requested"),
+        key="comparison-browser-outcome",
+    )
+    search = filters[2].text_input("Search questions and answers", key="comparison-search")
 
     def matches(record: dict[str, Any]) -> bool:
-        name = str(record.get("display_name") or record.get("model_id"))
-        subject = str(record.get("subject") or "unknown")
-        if selected_models and name not in selected_models:
-            return False
-        if selected_subjects and subject not in selected_subjects:
+        if record["_comparison_name"] not in browser_labels:
             return False
         outcomes = {
-            "Correct": bool(record.get("correct")),
-            "Incorrect": not record.get("correct") and record.get("error") is None,
+            "Correct": result_outcome(record) == "correct",
+            "Incorrect": result_outcome(record) == "incorrect",
             "Missing FINAL": record.get("error") is None and record.get("extracted_answer") is None,
-            "Request failed": record.get("error") is not None,
+            "Failed": result_outcome(record) == "failed",
+            "Clarification requested": bool(clarification_rows([record])),
         }
         if selected_outcome != "All" and not outcomes[selected_outcome]:
             return False
-        if search:
-            haystack = " ".join(str(record.get(key) or "") for key in ("question", "response", "extracted_answer", "reference_answer"))
-            if search.casefold() not in haystack.casefold():
-                return False
-        return True
+        haystack = " ".join(
+            str(record.get(key) or "")
+            for key in ("example_id", "question", "response", "extracted_answer", "reference_answer")
+        )
+        clarification_text = json.dumps(clarification_rows([record]), ensure_ascii=False)
+        return not search or search.casefold() in f"{haystack} {clarification_text}".casefold()
 
-    matching_records = [record for record in records if matches(record)]
-    pages = max(1, (len(matching_records) + PAGE_SIZE - 1) // PAGE_SIZE)
-    page = int(st.number_input("Answer page", min_value=1, max_value=pages, value=1, step=1))
+    matching = [record for record in combined_records if matches(record)]
+    pages = max(1, (len(matching) + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = int(st.number_input("Question page", min_value=1, max_value=pages, value=1, step=1))
     start = (page - 1) * PAGE_SIZE
-    shown = matching_records[start : start + PAGE_SIZE]
-    st.caption(
-        f"Showing {start + 1 if shown else 0}–{start + len(shown)} of {len(matching_records):,} answers · "
-        f"{extraction_failures:,} missing FINAL answers overall"
-    )
+    shown = matching[start : start + PAGE_SIZE]
+    st.caption(f"Showing {start + 1 if shown else 0}–{start + len(shown)} of {len(matching):,} records")
     for record in shown:
-        render_megascience_record(record)
+        st.caption(f"{record['_comparison_name']} · {record['_comparison_kind']}")
+        if record["_comparison_kind"] == "Conductor evaluation":
+            render_hle_benchmark_record(record)
+        else:
+            render_megascience_record(record)
+
+
+def _render_capability_output(label: str, record: dict[str, Any]) -> None:
+    outcome = result_outcome(record)
+    status_labels = {
+        "correct": "Correct",
+        "incorrect": "Incorrect",
+        "failed": "Failed",
+        "unjudged": "Unjudged",
+    }
+    status_icons = {
+        "correct": "🟢",
+        "incorrect": "🔴",
+        "failed": "⚫",
+        "unjudged": "🟡",
+    }
+    with st.container(border=True):
+        st.markdown(f"**{escape(label)}**")
+        st.caption(f"{status_icons[outcome]} {status_labels[outcome]}")
+        st.markdown("**Extracted answer**")
+        st.markdown(str(record.get("extracted_answer") or "_No final answer extracted._"))
+
+        details = []
+        runtime = record.get("workflow_runtime_ms", record.get("latency_ms"))
+        if runtime is not None:
+            details.append(f"{float(runtime) / 1000:.1f} s")
+        if record.get("total_tokens") is not None:
+            details.append(f'{int(record["total_tokens"]):,} tokens')
+        if record.get("estimated_cost_usd") is not None:
+            details.append(f'${float(record["estimated_cost_usd"]):.3f}')
+        if details:
+            st.caption(" · ".join(details))
+
+        with st.expander("Benchmark output"):
+            st.markdown(str(record.get("response") or "_No response was recorded._"))
+        with st.expander("Judge output"):
+            if record.get("judge_reason"):
+                st.markdown(str(record["judge_reason"]))
+            if record.get("judge_response"):
+                st.code(str(record["judge_response"]))
+            if record.get("judge_error"):
+                st.warning(str(record["judge_error"]))
+            elif not record.get("judge_reason") and not record.get("judge_response"):
+                st.caption("No judge output was recorded.")
+        worker_outputs = record.get("worker_outputs") or {}
+        if worker_outputs:
+            with st.expander(f"Worker outputs ({len(worker_outputs)})"):
+                for step_id, output in worker_outputs.items():
+                    if not isinstance(output, dict):
+                        continue
+                    st.markdown(
+                        f'**{escape(str(step_id))}** · '
+                        f'`{escape(str(output.get("model_id") or "unknown"))}`'
+                    )
+                    st.markdown(str(output.get("text") or "_No visible output._"))
+
+
+def _select_capability_question(question_key: str) -> None:
+    st.session_state["capability-selected-key"] = question_key
+
+
+def render_capability_map_page() -> None:
+    st.title("Capability map")
+    st.caption(
+        "Compare the exact questions each run can solve. Green gains without red regressions are "
+        "a strict upgrade; gains and regressions together indicate capability movement."
+    )
+
+    entries = _load_benchmark_entries(evaluations_only=False)
+    if len(entries) < 2:
+        st.info("At least two HLE benchmark or conductor evaluation runs are required.")
+        return
+
+    labels = sorted(entries)
+    clarification_default = next(
+        (index for index, label in enumerate(labels) if "clarification" in label.casefold()),
+        len(labels) - 1,
+    )
+    baseline_default = next(
+        (
+            index
+            for index, label in enumerate(labels)
+            if "frontier evaluation" in label.casefold() and "gpt-6" in label.casefold()
+        ),
+        0,
+    )
+    if baseline_default == clarification_default:
+        baseline_default = 0 if clarification_default != 0 else 1
+
+    selectors = st.columns(2)
+    baseline_label = selectors[0].selectbox(
+        "Baseline run", labels, index=baseline_default, key="capability-baseline"
+    )
+    candidate_label = selectors[1].selectbox(
+        "Candidate run", labels, index=clarification_default, key="capability-candidate"
+    )
+    if baseline_label == candidate_label:
+        st.info("Choose two different runs to map capability movement.")
+        return
+
+    rows = capability_comparison(
+        entries[baseline_label]["records"], entries[candidate_label]["records"]
+    )
+    if not rows:
+        st.warning("These runs do not contain any shared benchmark questions.")
+        return
+
+    movement_counts = Counter(row["movement"] for row in rows)
+    retained = movement_counts["Retained"]
+    gained = movement_counts["Gained"]
+    regressed = movement_counts["Regressed"]
+    unsolved = movement_counts["Unsolved"]
+    net = gained - regressed
+    headline = st.columns(5)
+    headline[0].metric("Shared questions", f"{len(rows):,}")
+    headline[1].metric("Retained", f"{retained:,}")
+    headline[2].metric("Gained", f"{gained:,}", delta=f"+{gained}")
+    headline[3].metric("Regressed", f"{regressed:,}", delta=f"-{regressed}", delta_color="inverse")
+    headline[4].metric("Net capability", f"{net:+,}")
+
+    if gained and not regressed:
+        st.success(f"Strict upgrade on the shared set: {gained} newly solved and no regressions.")
+    elif net > 0:
+        st.info(
+            f"Net upgrade with capability movement: {gained} gained, {regressed} regressed "
+            f"({net:+} net)."
+        )
+    elif net == 0 and (gained or regressed):
+        st.warning(
+            f"Capability moved rather than expanded: {gained} gains are offset by "
+            f"{regressed} regressions."
+        )
+    elif net < 0:
+        st.error(f"Net regression: {gained} gained and {regressed} regressed ({net:+} net).")
+    else:
+        st.info("No correctness changed on the shared question set.")
+
+    selected_key = str(st.session_state.get("capability-selected-key") or rows[0]["key"])
+    selected_row = next((row for row in rows if row["key"] == selected_key), rows[0])
+    if selected_row["key"] != selected_key:
+        st.session_state["capability-selected-key"] = selected_row["key"]
+
+    grid_column, detail_column = st.columns((1.75, 1), gap="large")
+    with grid_column:
+        st.subheader(f"Questions 001–{len(rows):03d}")
+        st.markdown(
+            '<div class="capability-legend">'
+            '<span><i class="capability-swatch" style="background:#d9ebfa"></i>Retained</span>'
+            '<span><i class="capability-swatch" style="background:#d4f1e3"></i>Gained</span>'
+            '<span><i class="capability-swatch" style="background:#f9dadd"></i>Regressed</span>'
+            '<span><i class="capability-swatch" style="background:#e9edf2"></i>Unsolved</span>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        grid_columns = st.columns(13, gap="small")
+        for index, row in enumerate(rows, 1):
+            movement = row["movement"].casefold()
+            with grid_columns[(index - 1) % 13]:
+                with st.container(key=f"capability-cell-{movement}-{index}"):
+                    st.button(
+                        f"{index:03d}",
+                        key=f'capability-select-{row["key"]}',
+                        on_click=_select_capability_question,
+                        args=(row["key"],),
+                        type="primary" if row["key"] == selected_row["key"] else "secondary",
+                        width="stretch",
+                    )
+        st.caption(
+            f"{unsolved:,} questions remain unsolved by both runs. Select any cell to inspect "
+            "the answers and full benchmark outputs."
+        )
+
+    with detail_column:
+        selected_index = rows.index(selected_row) + 1
+        st.subheader(f"Question {selected_index:03d}")
+        question = str(
+            selected_row["candidate"].get("question")
+            or selected_row["baseline"].get("question")
+            or "Question unavailable"
+        )
+        with st.expander("Question", expanded=False):
+            st.markdown(question)
+        _render_capability_output(baseline_label, selected_row["baseline"])
+        _render_capability_output(candidate_label, selected_row["candidate"])
+        with st.expander("Reference answer"):
+            st.markdown(
+                str(
+                    selected_row["candidate"].get("reference_answer")
+                    or selected_row["candidate"].get("gold_answer")
+                    or selected_row["baseline"].get("reference_answer")
+                    or selected_row["baseline"].get("gold_answer")
+                    or "—"
+                )
+            )
 
 
 def render_hle_benchmark_record(record: dict[str, Any]) -> None:
-    if record.get("error"):
-        outcome, icon, card_state = "Workflow failed", "⚫", "failed"
-    elif record.get("judge_error"):
-        outcome, icon, card_state = "Judge failed", "🟡", "unjudged"
-    elif record.get("correct") is True:
+    result = result_outcome(record)
+    if result == "failed":
+        failure_kind = "Workflow failed" if record.get("error") else "Judge failed"
+        outcome, icon, card_state = failure_kind, "⚫", "failed"
+    elif result == "correct":
         outcome, icon, card_state = "Correct", "🟢", "correct"
-    elif record.get("correct") is False:
+    elif result == "incorrect":
         outcome, icon, card_state = "Incorrect", "🔴", "incorrect"
     elif record.get("extracted_answer") is None:
         outcome, icon, card_state = "Missing final answer", "🟡", "unjudged"
@@ -1558,7 +2170,20 @@ def render_hle_benchmark_record(record: dict[str, Any]) -> None:
             for step_id, output in outputs.items():
                 if not isinstance(output, dict):
                     continue
-                with st.expander(f'{step_id} · {output.get("model_id") or "unknown model"}'):
+                clarification_count = sum(
+                    isinstance(call, dict) and call.get("name") == "request_clarification"
+                    for call in output.get("tool_calls") or []
+                )
+                clarification_label = (
+                    f" · {clarification_count} clarification"
+                    f"{'s' if clarification_count != 1 else ''}"
+                    if clarification_count
+                    else ""
+                )
+                with st.expander(
+                    f'{step_id} · {output.get("model_id") or "unknown model"}'
+                    f"{clarification_label}"
+                ):
                     usage = output.get("usage") or {}
                     details = []
                     if output.get("latency_ms") is not None:
@@ -1571,6 +2196,7 @@ def render_hle_benchmark_record(record: dict[str, Any]) -> None:
                         details.append(f'finish: {output["finish_reason"]}')
                     if details:
                         st.caption(" · ".join(details))
+                    render_clarification_requests(output)
                     st.markdown(str(output.get("text") or "_No visible response text._"))
         with answers_tab:
             columns = st.columns(2)
@@ -1590,216 +2216,17 @@ def render_hle_benchmark_record(record: dict[str, Any]) -> None:
             st.markdown(str(record.get("response") or "_No response._"))
 
 
-def render_hle_benchmark_page() -> None:
-    st.title("Theo Conductor on HLE Physics · Text Only")
-    st.caption(
-        "Inspect end-to-end workflow results for the 202-question HLE physics, text-only subset."
-    )
-
-    runs = discover_hle_benchmark_runs(ROOT)
-    if not runs:
-        st.info(
-            "No text-only HLE physics benchmark runs with summary.json and results.jsonl "
-            "were found under outputs/."
-        )
-        return
-    run_names = sorted(
-        runs,
-        key=lambda name: runs[name][0].stat().st_mtime_ns,
-        reverse=True,
-    )
-    run_name = st.sidebar.selectbox("HLE physics benchmark run", run_names)
-    summary_path, results_path = runs[run_name]
-    try:
-        summary, records = load_hle_benchmark_page(
-            str(summary_path),
-            str(results_path),
-            (summary_path.stat().st_mtime_ns, results_path.stat().st_mtime_ns),
-        )
-    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
-        st.error(f"Could not load the HLE physics benchmark: {exc}")
-        return
-
-    metrics = hle_run_metrics(records)
-    model_metrics = (summary.get("models") or {}).get("theo-conductor") or {}
-    ci = model_metrics.get("accuracy_95_ci") or [None, None]
-    headline = st.columns(7)
-    values = (
-        (f'{metrics["workflows"]:,}', "Questions"),
-        (_percent(metrics["accuracy"]), "Overall accuracy"),
-        (_percent(metrics["completed_accuracy"]), "Completed accuracy"),
-        (f'{metrics["failed"]:,}', "Workflow failures"),
-        (f'{metrics["missing_final"]:,}', "Missing FINAL"),
-        (f'${metrics["total_cost_usd"]:.2f}' if metrics["total_cost_usd"] is not None else "—", "Worker cost"),
-        (f'{metrics["mean_runtime_ms"] / 1000:.1f}s' if metrics["mean_runtime_ms"] is not None else "—", "Mean runtime"),
-    )
-    for column, (value, label) in zip(headline, values, strict=True):
-        column.metric(label, value)
-
-    mode = summary.get("worker_token_limit_mode") or "unknown"
-    dataset_name = "HLE physics · text-only"
-    ci_text = (
-        f' · 95% CI {_percent(ci[0])}–{_percent(ci[1])}'
-        if ci[0] is not None and ci[1] is not None
-        else ""
-    )
-    st.caption(
-        f'{run_name} · {dataset_name} · config {str(summary.get("execution_config_sha256") or "—")[:12]} · '
-        f'token mode {mode} · workflow concurrency {summary.get("concurrency", "—")} · '
-        f'temperature {summary.get("worker_temperature", "—")}{ci_text}'
-    )
-    if not summary.get("text_only"):
-        st.warning(
-            "This run is not marked text-only. Image-dependent HLE questions may have been scored without their images."
-        )
-    if metrics["externally_judged"] < metrics["scored"]:
-        st.info(
-            f'{metrics["scored"] - metrics["externally_judged"]:,} failed workflow(s) were automatically scored incorrect without an external judge response.'
-        )
-
-    outcome_rows = pd.DataFrame(
-        [
-            {"Outcome": "Correct", "Count": metrics["correct"]},
-            {"Outcome": "Incorrect", "Count": metrics["incorrect"]},
-            {"Outcome": "Workflow failed", "Count": metrics["failed"]},
-            {"Outcome": "Judge failed", "Count": metrics["judge_failed"]},
-        ]
-    )
-    overview_columns = st.columns((1, 2))
-    with overview_columns[0]:
-        st.subheader("Outcomes")
-        st.altair_chart(
-            alt.Chart(outcome_rows)
-            .mark_arc(innerRadius=45)
-            .encode(
-                theta=alt.Theta("Count:Q"),
-                color=alt.Color(
-                    "Outcome:N",
-                    scale=alt.Scale(
-                        domain=["Correct", "Incorrect", "Workflow failed", "Judge failed"],
-                        range=["#318260", "#c94848", "#000000", "#9ca3af"],
-                    ),
-                    title=None,
-                ),
-                tooltip=["Outcome:N", "Count:Q"],
-            )
-            .properties(height=250),
-            width="stretch",
-        )
-    with overview_columns[1]:
-        st.subheader("Run health")
-        health_rows = pd.DataFrame(
-            [
-                {"Metric": "Completed", "Count": metrics["completed"]},
-                {"Metric": "Completed without errors or token caps (including judge)", "Count": metrics["clean_completed"]},
-                {"Metric": "Judge failed", "Count": metrics["judge_failed"]},
-                {"Metric": "Externally judged", "Count": metrics["externally_judged"]},
-                {"Metric": "Capped worker steps", "Count": metrics["capped_steps"]},
-                {"Metric": "Missing FINAL", "Count": metrics["missing_final"]},
-            ]
-        )
-        st.dataframe(health_rows, hide_index=True, width="stretch")
-        if metrics["error_types"]:
-            st.dataframe(
-                pd.DataFrame(
-                    [{"Error type": name, "Count": count} for name, count in metrics["error_types"].items()]
-                ),
-                hide_index=True,
-                width="stretch",
-            )
-
-    steps = pd.DataFrame(worker_step_rows(records))
-    st.subheader("Worker model usage")
-    if steps.empty:
-        st.caption("No completed worker steps were found.")
-    else:
-        for column in ("latency_ms", "prompt_tokens", "completion_tokens", "total_tokens", "estimated_cost_usd"):
-            steps[column] = pd.to_numeric(steps[column], errors="coerce")
-        worker_summary = (
-            steps.groupby("model_id", dropna=False)
-            .agg(
-                Calls=("step_id", "count"),
-                Capped=("finish_reason", lambda values: int((values == "length").sum())),
-                **{
-                    "Mean latency (s)": ("latency_ms", lambda values: values.mean() / 1000),
-                    "Mean prompt tokens": ("prompt_tokens", "mean"),
-                    "Mean output tokens": ("completion_tokens", "mean"),
-                    "Total cost ($)": ("estimated_cost_usd", "sum"),
-                },
-            )
-            .reset_index()
-            .rename(columns={"model_id": "Model"})
-            .sort_values("Calls", ascending=False)
-        )
-        st.dataframe(
-            worker_summary,
-            hide_index=True,
-            width="stretch",
-            column_config={
-                "Mean latency (s)": st.column_config.NumberColumn(format="%.1f"),
-                "Mean prompt tokens": st.column_config.NumberColumn(format="%.0f"),
-                "Mean output tokens": st.column_config.NumberColumn(format="%.0f"),
-                "Total cost ($)": st.column_config.NumberColumn(format="$%.3f"),
-            },
-        )
-
-    st.subheader("Question browser")
-    subjects = sorted({str(record.get("subject") or "unknown") for record in records})
-    error_types = sorted({str(record.get("error_type") or "unknown") for record in records if record.get("error")})
-    filters = st.columns((1, 1, 1, 2))
-    selected_outcome = filters[0].selectbox(
-        "Outcome",
-        ("All", "Correct", "Incorrect", "Workflow failed", "Judge failed", "Missing FINAL", "Capped step"),
-    )
-    selected_subjects = filters[1].multiselect("Subjects", subjects, placeholder="All subjects")
-    selected_errors = filters[2].multiselect("Error types", error_types, placeholder="All errors")
-    search = filters[3].text_input("Search HLE physics records")
-
-    def matches_hle(record: dict[str, Any]) -> bool:
-        if selected_subjects and str(record.get("subject") or "unknown") not in selected_subjects:
-            return False
-        if selected_errors and str(record.get("error_type") or "unknown") not in selected_errors:
-            return False
-        has_capped = any(
-            isinstance(output, dict) and output.get("finish_reason") == "length"
-            for output in (record.get("worker_outputs") or {}).values()
-        )
-        outcomes = {
-            "Correct": record.get("correct") is True,
-            "Incorrect": record.get("correct") is False and record.get("error") is None and not record.get("judge_error"),
-            "Workflow failed": record.get("error") is not None,
-            "Judge failed": record.get("error") is None and bool(record.get("judge_error")),
-            "Missing FINAL": record.get("error") is None and record.get("extracted_answer") is None,
-            "Capped step": has_capped,
-        }
-        if selected_outcome != "All" and not outcomes[selected_outcome]:
-            return False
-        if search:
-            haystack = " ".join(
-                str(record.get(key) or "")
-                for key in ("example_id", "question", "response", "extracted_answer", "reference_answer", "error")
-            )
-            if search.casefold() not in haystack.casefold():
-                return False
-        return True
-
-    matching = [record for record in records if matches_hle(record)]
-    pages = max(1, (len(matching) + PAGE_SIZE - 1) // PAGE_SIZE)
-    page = int(st.number_input("HLE physics page", min_value=1, max_value=pages, value=1, step=1))
-    start = (page - 1) * PAGE_SIZE
-    shown = matching[start : start + PAGE_SIZE]
-    st.caption(f"Showing {start + 1 if shown else 0}–{start + len(shown)} of {len(matching):,} records")
-    for record in shown:
-        render_hle_benchmark_record(record)
-
-
-page_name = st.sidebar.radio(
-    "Viewer page",
-    ("Trace analysis", "HLE Physics · text only", "MegaScience · small models"),
+viewer_pages = ("Capability map", "Comparisons", "Plans")
+requested_page = str(st.query_params.get("viewer") or "")
+requested_index = (
+    viewer_pages.index(requested_page) if requested_page in viewer_pages else 0
 )
-if page_name == "HLE Physics · text only":
-    render_hle_benchmark_page()
-elif page_name == "MegaScience · small models":
-    render_megascience_page()
+page_name = st.sidebar.radio(
+    "Viewer page", viewer_pages, index=requested_index, key="viewer-page"
+)
+if page_name == "Comparisons":
+    render_comparisons_page()
+elif page_name == "Capability map":
+    render_capability_map_page()
 else:
     render_trace_analysis_page()

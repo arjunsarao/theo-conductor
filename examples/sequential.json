@@ -10,13 +10,13 @@
     },
     {
       "step_id": "verify_constants",
-      "model_id": "claude-opus-4.8",
+      "model_id": "claude-fable-5.1",
       "instruction": "Audit derive for the harmonic-oscillator moment, numerical coefficient, dimensions, sign, and perturbative order. Return a corrected expression with a short justification if any issue is found.",
       "access_list": ["question", "derive"]
     },
     {
       "step_id": "final",
-      "model_id": "gpt-5.5",
+      "model_id": "gpt-6-astra",
       "instruction": "Use the derivation and audit to answer the original question directly, giving the ground-state energy through first order in lambda and identifying the neglected order. Do not mention the workflow or intermediate workers.",
       "access_list": ["question", "derive", "verify_constants"]
     }

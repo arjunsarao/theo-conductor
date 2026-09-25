@@ -16,13 +16,13 @@
     },
     {
       "step_id": "physics_adjudication",
-      "model_id": "claude-opus-4.8",
+      "model_id": "claude-fable-5.1",
       "instruction": "Compare the two derivations. Adjudicate signs, powers of e^A, boundary conditions, and the relation between the separated eigenvalue and the four-dimensional mass, including the possible curvature shift for an Einstein but non-flat g_{mu nu}. Flag claims that cannot be fixed without specifying the curvature convention.",
       "access_list": ["question", "derive_sturm_liouville", "independent_derivation"]
     },
     {
       "step_id": "final",
-      "model_id": "gpt-5.5",
+      "model_id": "gpt-6-astra",
       "instruction": "Synthesize a rigorous final response using the derivations and adjudication. Present one consistent eigenvalue equation with definitions, the periodic boundary condition, and the mass/eigenvalue relation. Mention convention-dependent alternatives briefly where necessary, and do not invent a numerical spectrum that the question does not request.",
       "access_list": ["question", "derive_sturm_liouville", "independent_derivation", "physics_adjudication"]
     }

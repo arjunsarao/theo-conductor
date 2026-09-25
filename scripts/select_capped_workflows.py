@@ -31,6 +31,11 @@ def main() -> None:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--config-output", required=True, type=Path)
+    parser.add_argument(
+        "--capped-only",
+        action="store_true",
+        help="Select only incorrect workflows containing a length-capped worker step.",
+    )
     args = parser.parse_args()
 
     results = load_jsonl(args.results)
@@ -40,22 +45,33 @@ def main() -> None:
         for output in (record.get("worker_outputs") or {}).values()
         if isinstance(output, dict) and output.get("finish_reason") == "length"
     }
-    target_ids = {
-        str(record.get("example_id"))
-        for record in results
-        if (
-            record.get("error") is not None
-            and record.get("error_type") != "ValueError"
-        )
-        or (
-            record.get("error") is None
-            and record.get("judge_correct") is not True
+    if args.capped_only:
+        target_ids = {
+            str(record.get("example_id"))
+            for record in results
+            if record.get("judge_correct") is False
             and any(
-                isinstance(output, dict) and output.get("finish_reason") in {"length", "error"}
+                isinstance(output, dict) and output.get("finish_reason") == "length"
                 for output in (record.get("worker_outputs") or {}).values()
             )
-        )
-    }
+        }
+    else:
+        target_ids = {
+            str(record.get("example_id"))
+            for record in results
+            if (
+                record.get("error") is not None
+                and record.get("error_type") != "ValueError"
+            )
+            or (
+                record.get("error") is None
+                and record.get("judge_correct") is not True
+                and any(
+                    isinstance(output, dict) and output.get("finish_reason") in {"length", "error"}
+                    for output in (record.get("worker_outputs") or {}).values()
+                )
+            )
+        }
     plans = [record for record in load_jsonl(args.plans) if str(record.get("dataset_id")) in target_ids]
     if len(plans) != len(target_ids):
         found = {str(record.get("dataset_id")) for record in plans}

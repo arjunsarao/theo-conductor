@@ -184,3 +184,40 @@ def test_build_message_labels_artifacts_separately_from_step_outputs():
     content = messages[1]["content"]
     assert "<step_output id=solver>answer</step_output>" in content
     assert '<artifacts>[{"artifact_id": "results"}]</artifacts>' in content
+
+
+def test_openai_compatible_client_sends_and_parses_tool_calls():
+    client = OpenAICompatibleClient(base_url="http://localhost:8000/v1", model="worker")
+    message = SimpleNamespace(
+        content=None,
+        tool_calls=[SimpleNamespace(
+            id="call-1",
+            function=SimpleNamespace(
+                name="request_clarification",
+                arguments='{"question":"Which?"}',
+            ),
+        )],
+    )
+    completion = SimpleNamespace(
+        choices=[SimpleNamespace(message=message, finish_reason="tool_calls")],
+        usage=None,
+    )
+    create = AsyncMock(return_value=completion)
+    client.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    tools = [{
+        "type": "function",
+        "function": {
+            "name": "request_clarification",
+            "parameters": {"type": "object"},
+        },
+    }]
+
+    response = asyncio.run(client.generate(
+        instruction="Answer.", question="Question?", context={}, tools=tools,
+    ))
+
+    assert create.await_args.kwargs["tools"] is tools
+    assert create.await_args.kwargs["tool_choice"] == "auto"
+    assert response.tool_calls[0].call_id == "call-1"
+    assert response.tool_calls[0].name == "request_clarification"
+    assert response.tool_calls[0].arguments == {"question": "Which?"}

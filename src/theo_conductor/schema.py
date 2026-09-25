@@ -39,6 +39,25 @@ class Task(BaseModel):
         )
 
 
+class ToolCall(BaseModel):
+    """A provider-normalized request from a model to invoke a tool."""
+    call_id: str
+    name: str
+    arguments: Dict[str, Any]
+
+
+class ToolCallRecord(BaseModel):
+    """Durable audit record for one tool invocation and its result."""
+    call_id: str
+    name: str
+    arguments: Dict[str, Any]
+    result: Any = None
+    is_error: bool = False
+    model_id: str | None = None
+    usage: Dict[str, Any] | None = None
+    duration_ms: float | None = None
+
+
 class StepOutput(BaseModel):
     step_id: str
     model_id: int | str
@@ -46,6 +65,7 @@ class StepOutput(BaseModel):
     usage: dict[str, Any] | None = None
     latency_ms: float | None = None
     finish_reason: str | None = None
+    tool_calls: List[ToolCallRecord] = Field(default_factory=list)
 
 
 class RunResult(BaseModel):
@@ -63,6 +83,8 @@ class ModelResponse:
     usage: dict[str, Any] | None = None
     latency_ms: float | None = None
     finish_reason: str | None = None
+    tool_calls: tuple[ToolCall, ...] = ()
+    conversation: List[Dict[str, Any]] | None = None
 
 
 class ModelClient(Protocol):
@@ -74,6 +96,8 @@ class ModelClient(Protocol):
         max_tokens: int | None = None,
         temperature: float | None = None,
         response_format: dict[str, Any] | None = None,
+        tools: List[Dict[str, Any]] | None = None,
+        messages: List[Dict[str, Any]] | None = None,
     ) -> ModelResponse: ...
 
 

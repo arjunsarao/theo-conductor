@@ -4,19 +4,19 @@
   "workflow": [
     {
       "step_id": "candidate_energy",
-      "model_id": "gpt-5.5",
+      "model_id": "gpt-6-astra",
       "instruction": "Produce a candidate solution using conservation of mechanical energy. Define the angular convention, derive the exact speed at the bottom, and check the small-angle approximation.",
       "access_list": ["question"]
     },
     {
       "step_id": "candidate_dynamics",
-      "model_id": "claude-opus-4.8",
+      "model_id": "claude-fable-5.1",
       "instruction": "Solve the problem from the equation of motion or an equivalent potential-energy argument. Pay special attention to the height change, trigonometric identity, and dimensional consistency.",
       "access_list": ["question"]
     },
     {
       "step_id": "final",
-      "model_id": "gpt-5.5",
+      "model_id": "gpt-6-astra",
       "instruction": "Compare the two derivations, stress-test the result at theta_0=0, theta_0 approaching pi, and small theta_0, and write the final answer. Include the exact speed, assumptions, and small-angle form without mentioning the workflow or candidate solutions.",
       "access_list": ["question", "candidate_energy", "candidate_dynamics"]
     }

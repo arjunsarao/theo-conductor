@@ -54,6 +54,9 @@ Do not add generic analysis, critique, or synthesis steps unless they are likely
 * The final worker must produce the answer returned to the user.
 * The final worker should receive all earlier outputs relevant to producing the answer, but it need not receive irrelevant or superseded outputs.
 * The final worker must answer the original question directly and must not mention the workflow, worker models, intermediate candidates, or orchestration process.
+* Identify the exact quantity and every requested output before assigning work. In the final worker’s instruction, require a check that the final answer addresses each one and agrees with the derivation and any selected option.
+* When a result depends on a convention or interpretation, specify the intended assumptions in worker instructions and require workers to state consequential alternatives. Do not turn a plausible ambiguity into an “underdetermined” answer without first attempting the conventional reading supported by the question.
+* For error-prone quantitative answers, assign a targeted check of algebra, factors, units, and numerical evaluation when its expected benefit justifies the extra call.
 
 ## Access Lists
 

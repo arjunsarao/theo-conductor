@@ -8,6 +8,7 @@ import theo_conductor.workflow_benchmark as workflow_benchmark
 from theo_conductor.models.registry import ModelRegistry
 from theo_conductor.schema import ModelResponse, ModelSpec
 from theo_conductor.workflow_benchmark import (
+    _usage_totals,
     execution_config_hash,
     load_results,
     run_workflow_benchmark,
@@ -112,6 +113,35 @@ def test_runs_ten_workflows_and_resumes_without_duplicate_calls(tmp_path):
     assert summarize_workflows(first, bootstrap_samples=10)["completed"] == 10
 
 
+def test_judges_each_workflow_before_its_result_is_checkpointed(tmp_path):
+    class JudgeClient:
+        async def generate(self, **kwargs):
+            # The immediate path grades exactly one finished workflow at a time.
+            assert "Return 0" in kwargs["question"]
+            return ModelResponse(
+                text='[{"id":"batch-0-item-0","correct":true,"reason":"Matches gold."}]'
+            )
+
+    registry = ModelRegistry([ModelSpec(model_idx="worker", client=WorkflowClient())])
+    path = tmp_path / "results.jsonl"
+    plans = plan_records(1)
+    # This is the compact format emitted by the stored frontier planner runs.
+    plans[0]["plan"].pop("question")
+    records = asyncio.run(run_workflow_benchmark(
+        registry=registry,
+        plan_records=plans,
+        results_path=path,
+        execution_config_sha256="immediate-judge",
+        judge_client=JudgeClient(),
+        judge_model="~deepseek/deepseek-flash-latest",
+    ))
+
+    persisted = json.loads(path.read_text())
+    assert records[0]["judge_correct"] is True
+    assert persisted["judge_correct"] is True
+    assert persisted["correct"] is True
+
+
 def test_worker_batching_pools_models_across_dependency_layers(tmp_path):
     class BatchClient:
         supports_batch = True
@@ -174,6 +204,7 @@ def test_worker_batching_pools_models_across_dependency_layers(tmp_path):
 def test_select_text_only_plans_filters_ids_and_restores_subjects():
     selected = select_text_only_plans(
         plan_records(3),
+
         [
             {"id": "hle-0", "subject": "Math"},
             {"id": "hle-2", "subject": "Physics"},
@@ -419,8 +450,64 @@ def test_cli_judge_verdicts_are_persisted_to_results(tmp_path, monkeypatch):
         "--config", str(config),
         "--output-dir", str(output),
         "--include-multimodal",
+        "--no-judge-immediately",
         "--bootstrap-samples", "10",
     ]))
 
     persisted = json.loads((output / "results.jsonl").read_text())
     assert persisted["correct"] is True
+
+
+def test_tool_capable_workers_use_iterative_path_when_batching_requested(tmp_path):
+    class ToolBatchClient:
+        supports_batch = True
+
+        def __init__(self):
+            self.single_calls = []
+
+        async def generate(self, **kwargs):
+            self.single_calls.append(kwargs)
+            return ModelResponse(text="FINAL: 0")
+
+        async def generate_batch(self, requests):
+            raise AssertionError("tool-capable workers must use the iterative path")
+
+    client = ToolBatchClient()
+    registry = ModelRegistry([
+        ModelSpec(model_idx="worker", client=client, supports_tools=True),
+    ])
+
+    results = asyncio.run(run_workflow_benchmark(
+        registry=registry,
+        plan_records=plan_records(1),
+        results_path=tmp_path / "results.jsonl",
+        execution_config_sha256="tools-default",
+        batch_workers=True,
+    ))
+
+    assert results[0]["extracted_answer"] == "0"
+    assert len(client.single_calls) == 1
+    assert client.single_calls[0]["tools"][0]["function"]["name"] == (
+        "request_clarification"
+    )
+
+
+def test_usage_totals_include_model_backed_tool_calls():
+    totals = _usage_totals({
+        "final": {
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+            "tool_calls": [{
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "total_tokens": 15,
+                    "estimated_cost_usd": 0.00035,
+                },
+            }],
+        },
+    })
+
+    assert totals["prompt_tokens"] == 12
+    assert totals["completion_tokens"] == 6
+    assert totals["total_tokens"] == 18
+    assert totals["estimated_cost_usd"] == pytest.approx(0.00035)

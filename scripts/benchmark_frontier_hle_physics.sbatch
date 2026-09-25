@@ -38,8 +38,8 @@ args=(
   --use-model-output-limits
   --temperature "${BENCHMARK_TEMPERATURE:-0.0}"
   --concurrency "${BENCHMARK_CONCURRENCY:-4}"
-  --batch-model gpt-5.5
-  --batch-model claude-opus-4.8
+  --batch-model gpt-6-astra
+  --batch-model claude-fable-5.1
   --worker-batch-size "${WORKER_BATCH_SIZE:-202}"
   --bootstrap-samples "${BENCHMARK_BOOTSTRAP_SAMPLES:-10000}"
   --judge-concurrency "${JUDGE_CONCURRENCY:-8}"

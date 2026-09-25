@@ -10,19 +10,19 @@
     },
     {
       "step_id": "compute_eigenvalues",
-      "model_id": "gpt-5.5",
+      "model_id": "gpt-6-astra",
       "instruction": "Using the operator and conventions established in derive_operator, construct a controlled Fourier or equivalent spectral approximation on the circle and determine how many relevant eigenvalues are strictly below 14. Show enough intermediate reasoning to assess convergence, multiplicities, and any eigenvalue near the cutoff.",
       "access_list": ["question", "derive_operator"]
     },
     {
       "step_id": "verify_spectrum",
-      "model_id": "claude-opus-4.8",
+      "model_id": "claude-fable-5.1",
       "instruction": "Audit the derived operator and spectral count. Check self-adjointness, periodicity, the existence or absence of a zero mode from the established operator rather than assumption, asymptotic behavior, multiplicities, and sensitivity near 14. Resolve any curvature-sign or mass-convention issue explicitly using the question's conventions and the derivation.",
       "access_list": ["question", "derive_operator", "compute_eigenvalues"]
     },
     {
       "step_id": "final",
-      "model_id": "gpt-5.5",
+      "model_id": "gpt-6-astra",
       "instruction": "Resolve discrepancies using the derivation and audit, then answer the original question directly. State the number of eigenvalues strictly below 14, counting multiplicity and including zero only if established, with only the minimal convention and method explanation needed to make the count rigorous. Do not mention the workflow or intermediate workers.",
       "access_list": ["question", "derive_operator", "compute_eigenvalues", "verify_spectrum"]
     }

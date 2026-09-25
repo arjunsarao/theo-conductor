@@ -100,6 +100,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Directory containing model YAML files (default: configs).",
     )
     parser.add_argument("--json", action="store_true", help="Print the complete run result as JSON.")
+    parser.add_argument(
+        "--ask-user-for-clarification",
+        action="store_true",
+        help="Ask the user for worker clarifications instead of GPT-6 Astra (default: off).",
+    )
     parser.add_argument("--quiet", action="store_true", help="Print only the answer.")
     parser.add_argument("--no-color", action="store_true", help="Disable ANSI colors.")
     return parser.parse_args(argv)
@@ -121,7 +126,15 @@ async def create_task(question: str, registry: ModelRegistry, conductor_model: s
             raise ValueError("No models are configured") from exc
 
     response = await registry.get(conductor_model).client.generate(
-        instruction=build_conductor_prompt(question, registry),
+        instruction=build_conductor_prompt(
+            question,
+            registry,
+            tools=(
+                ["request_clarification: resolve a consequential ambiguity via the configured authority."]
+                if any(spec.supports_tools for spec in registry._models.values())
+                else None
+            ),
+        ),
         # build_conductor_prompt already includes the complete question.
         question="",
         context={},
@@ -154,7 +167,11 @@ async def async_main(argv: Sequence[str] | None = None) -> RunResult:
     console.plan(task)
     console.log("▶", f"Running {len(task.workflow)} worker steps")
     started = time.perf_counter()
-    result = await Runner(model_registry=registry, event_handler=console.step_event).run(task)
+    result = await Runner(
+        model_registry=registry,
+        event_handler=console.step_event,
+        ask_user_for_clarification=args.ask_user_for_clarification,
+    ).run(task)
     elapsed = time.perf_counter() - started
 
     if args.json:

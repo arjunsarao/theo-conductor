@@ -3,7 +3,8 @@ import sys
 from types import SimpleNamespace
 
 from theo_conductor.grpo import RewardTrace
-from theo_conductor.schema import Difficulty, RunResult, Step, StepOutput, Task
+from theo_conductor.schema import (
+    Difficulty, RunResult, Step, StepOutput, Task, ToolCallRecord)
 from theo_conductor.traces import TrainingTraceLogger, reward_trace_to_dict
 
 
@@ -16,7 +17,17 @@ def _trace() -> RewardTrace:
     )
     result = RunResult(
         task=task,
-        outputs={"final": StepOutput(step_id="final", model_id="solver", text="FINAL: 4")},
+        outputs={"final": StepOutput(
+            step_id="final",
+            model_id="solver",
+            text="FINAL: 4",
+            tool_calls=[ToolCallRecord(
+                call_id="call-1",
+                name="request_clarification",
+                arguments={"question": "Which?"},
+                result={"answer": "A"},
+            )],
+        )},
     )
     return RewardTrace(
         completion='{"workflow": []}',
@@ -39,6 +50,8 @@ def test_reward_trace_record_contains_plan_and_worker_outputs():
     assert record["workflow_runtime"]["observed_wall_time_ms"] is None
     assert record["conductor_performance"]["usage"] is None
     assert record["judge_performance"]["usage"] is None
+    assert record["worker_outputs"]["final"]["tool_calls"][0]["arguments"] == {"question": "Which?"}
+    assert record["worker_outputs"]["final"]["tool_calls"][0]["result"] == {"answer": "A"}
 
 
 def test_training_trace_logger_appends_jsonl(tmp_path):

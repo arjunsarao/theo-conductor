@@ -80,6 +80,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt-file", type=Path, default=DEFAULT_PROMPT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--base-url", default=os.getenv("OPENROUTER_BASE_URL", DEFAULT_BASE_URL))
+    parser.add_argument(
+        "--planner-model-id",
+        action="append",
+        choices=[spec["model_id"] for spec in MODEL_SPECS],
+        help="Generate only this planner model (repeat to select several; default: all).",
+    )
     parser.add_argument("--sample-count", type=int, default=15)
     parser.add_argument("--expect-samples", type=int, default=202)
     parser.add_argument("--seed", type=int, default=42)
@@ -585,7 +591,11 @@ async def run(args: argparse.Namespace) -> int:
         sample_count=args.sample_count,
         seed=args.seed,
     )
-    prices = await fetch_pricing(args.base_url, MODEL_SPECS)
+    selected_specs = tuple(
+        spec for spec in MODEL_SPECS
+        if not args.planner_model_id or spec["model_id"] in args.planner_model_id
+    )
+    prices = await fetch_pricing(args.base_url, selected_specs)
     write_json_atomic(args.output_dir / "pricing.json", prices)
 
     plans_path = args.output_dir / "plans.jsonl"
@@ -608,7 +618,7 @@ async def run(args: argparse.Namespace) -> int:
     output_format = response_format(worker_model_ids)
     work_items: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for row in selected:
-        for spec in MODEL_SPECS:
+        for spec in selected_specs:
             key = (str(spec["model_id"]), str(row["id"]))
             if key in completed:
                 continue
@@ -687,7 +697,7 @@ async def run(args: argparse.Namespace) -> int:
     request_records = load_jsonl(requests_path)
     selected_ids = {str(row["id"]) for row in selected}
     models: dict[str, Any] = {}
-    for spec in MODEL_SPECS:
+    for spec in selected_specs:
         subset = [record for record in records if record["planner_model_id"] == spec["model_id"]]
         request_subset = [
             record
@@ -719,7 +729,8 @@ async def run(args: argparse.Namespace) -> int:
         "dataset_size": len(dataset),
         "sample_count": args.sample_count,
         "seed": args.seed,
-        "expected_requests": args.sample_count * len(MODEL_SPECS),
+        "planner_model_ids": [spec["model_id"] for spec in selected_specs],
+        "expected_requests": args.sample_count * len(selected_specs),
         "records": len(records),
         "request_attempts": len(request_records),
         "all_models_share_question_set": all(

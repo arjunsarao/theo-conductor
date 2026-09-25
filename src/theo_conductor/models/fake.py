@@ -26,6 +26,8 @@ class FakeModelClient:
         max_tokens: int | None = None,
         temperature: float | None = None,
         response_format: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        messages: list[dict[str, Any]] | None = None,
     ) -> ModelResponse:
         self.calls.append(
             {
@@ -35,6 +37,8 @@ class FakeModelClient:
                 "max_tokens": max_tokens,
                 "temperature": temperature,
                 "response_format": response_format,
+                "tools": tools,
+                "messages": messages,
             }
         )
 

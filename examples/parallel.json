@@ -4,19 +4,19 @@
   "workflow": [
   {
     "step_id": "derive",
-    "model_id": "gpt-5.5",
+    "model_id": "gpt-6-astra",
     "instruction": "Derive the first-order ground-state energy correction for the quartically perturbed harmonic oscillator. Express the answer in terms of lambda, hbar, m, and omega, and state the perturbative order retained.",
     "access_list": ["question"]
   },
   {
     "step_id": "independent_check",
-    "model_id": "claude-opus-4.8",
+    "model_id": "claude-fable-5.1",
     "instruction": "Independently calculate the same first-order correction from the harmonic-oscillator ground-state moments. Check the numerical factor, dimensions, sign, and lambda-to-zero limit.",
     "access_list": ["question"]
   },
   {
     "step_id": "final",
-    "model_id": "gpt-5.5",
+    "model_id": "gpt-6-astra",
     "instruction": "Reconcile the two calculations and give the final energy through first order in lambda, including the unperturbed energy and a concise derivation. Do not mention the workflow or intermediate solutions.",
     "access_list": ["question", "derive", "independent_check"]
   }

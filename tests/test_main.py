@@ -45,6 +45,14 @@ def test_parse_args_accepts_question_and_conductor_model():
     assert args.conductor_model == "planner"
 
 
+
+def test_parse_args_user_clarification_is_opt_in():
+    default = parse_args(["--question", "Q?"])
+    enabled = parse_args(["--question", "Q?", "--ask-user-for-clarification"])
+
+    assert default.ask_user_for_clarification is False
+    assert enabled.ask_user_for_clarification is True
+
 def test_load_task(tmp_path):
     path = tmp_path / "workflow.json"
     path.write_text(

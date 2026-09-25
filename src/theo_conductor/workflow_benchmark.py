@@ -16,11 +16,8 @@ from typing import Any
 from dotenv import load_dotenv
 
 from .benchmark import (
-    DEFAULT_FALLBACK_JUDGE_BASE_URL,
-    DEFAULT_FALLBACK_JUDGE_MODEL,
-    DEFAULT_JUDGE_BASE_URL,
-    DEFAULT_JUDGE_MODEL,
     extract_final_answer,
+    judge_records,
     judge_records_with_checkpoints,
     summarize_records,
     write_results_atomic,
@@ -36,6 +33,9 @@ from .validate import validate_task
 
 RESULTS_FILENAME = "results.jsonl"
 MODEL_ID = "theo-conductor"
+DEFAULT_WORKFLOW_JUDGE_BASE_URL = "https://openrouter.ai/api/v1"
+# This OpenRouter alias deliberately follows the current DeepSeek Flash release.
+DEFAULT_WORKFLOW_JUDGE_MODEL = "~deepseek/deepseek-flash-latest"
 
 
 def _json_hash(value: Any) -> str:
@@ -105,7 +105,7 @@ def _usage_totals(worker_outputs: dict[str, dict[str, Any]]) -> dict[str, int | 
     for output in worker_outputs.values():
         usage = output.get("usage")
         if not isinstance(usage, dict):
-            continue
+            usage = {}
         prompt = usage.get("prompt_tokens", usage.get("input_tokens"))
         completion = usage.get("completion_tokens", usage.get("output_tokens"))
         total = usage.get("total_tokens")
@@ -122,6 +122,26 @@ def _usage_totals(worker_outputs: dict[str, dict[str, Any]]) -> dict[str, int | 
         if isinstance(cost, (int, float)) and not isinstance(cost, bool):
             estimated_cost += float(cost)
             saw_cost = True
+        for tool_call in output.get("tool_calls") or []:
+            tool_usage = tool_call.get("usage")
+            if not isinstance(tool_usage, dict):
+                continue
+            tool_prompt = tool_usage.get("prompt_tokens", tool_usage.get("input_tokens"))
+            tool_completion = tool_usage.get("completion_tokens", tool_usage.get("output_tokens"))
+            tool_total = tool_usage.get("total_tokens")
+            tool_cost = tool_usage.get("estimated_cost_usd")
+            if isinstance(tool_prompt, (int, float)) and not isinstance(tool_prompt, bool):
+                prompt_tokens += int(tool_prompt)
+                saw_prompt = True
+            if isinstance(tool_completion, (int, float)) and not isinstance(tool_completion, bool):
+                completion_tokens += int(tool_completion)
+                saw_completion = True
+            if isinstance(tool_total, (int, float)) and not isinstance(tool_total, bool):
+                total_tokens += int(tool_total)
+                saw_total = True
+            if isinstance(tool_cost, (int, float)) and not isinstance(tool_cost, bool):
+                estimated_cost += float(tool_cost)
+                saw_cost = True
     return {
         "prompt_tokens": prompt_tokens if saw_prompt else None,
         "completion_tokens": completion_tokens if saw_completion else None,
@@ -179,6 +199,13 @@ async def run_workflow_benchmark(
     retry_failures: bool = False,
     batch_workers: bool = False,
     worker_batch_size: int = 50_000,
+    judge_client: Any | None = None,
+    judge_model: str = DEFAULT_WORKFLOW_JUDGE_MODEL,
+    fallback_judge_client: Any | None = None,
+    fallback_judge_model: str | None = None,
+    judge_concurrency: int = 8,
+    judge_max_tokens: int = 8192,
+    judge_attempts: int = 3,
 ) -> list[dict[str, Any]]:
     """Execute conductor plans with item-level isolation and resumable JSONL output."""
     if concurrency <= 0:
@@ -187,6 +214,21 @@ async def run_workflow_benchmark(
         raise ValueError("max-worker-tokens must be positive")
     if worker_batch_size <= 0:
         raise ValueError("worker-batch-size must be positive")
+    if judge_concurrency <= 0:
+        raise ValueError("judge-concurrency must be positive")
+    if judge_max_tokens <= 0:
+        raise ValueError("judge-max-tokens must be positive")
+    if judge_attempts <= 0:
+        raise ValueError("judge-attempts must be positive")
+    if fallback_judge_client is not None and not fallback_judge_model:
+        raise ValueError("fallback judge client requires a fallback judge model")
+    if batch_workers and any(
+        spec.supports_tools for spec in registry._models.values()
+    ):
+        # Tool calls require iterative continuations, which native batch jobs cannot provide.
+        batch_workers = False
+    if batch_workers and judge_client is not None:
+        raise ValueError("--batch-workers cannot judge immediately; omit it for per-workflow judging")
     if batch_workers:
         return await _run_batched_workflow_benchmark(
             registry=registry,
@@ -206,7 +248,25 @@ async def run_workflow_benchmark(
     existing_by_key = {_record_key(record): record for record in all_records}
     selected_keys: set[tuple[str, str, str]] = set()
     semaphore = asyncio.Semaphore(concurrency)
+    judge_semaphore = asyncio.Semaphore(judge_concurrency)
     write_lock = asyncio.Lock()
+
+    async def judge_completed_record(record: dict[str, Any]) -> None:
+        """Grade a single workflow before its completion checkpoint is written."""
+        if judge_client is None:
+            return
+        async with judge_semaphore:
+            await judge_records(
+                [record],
+                client=judge_client,
+                judge_model=judge_model,
+                fallback_client=fallback_judge_client,
+                fallback_judge_model=fallback_judge_model or "",
+                concurrency=1,
+                batch_size=1,
+                max_tokens=judge_max_tokens,
+                attempts=judge_attempts,
+            )
 
     async def execute(plan_record: dict[str, Any]) -> None:
         plan = plan_record.get("plan")
@@ -227,7 +287,11 @@ async def run_workflow_benchmark(
             if not isinstance(plan, dict) or plan_record.get("error"):
                 detail = plan_record.get("error") or "record does not contain a valid plan"
                 raise ValueError(f"Plan unavailable: {detail}")
-            task = Task.from_dict(plan)
+            # Frontier planner records keep the question beside the compact
+            # structured workflow rather than duplicating it inside `plan`.
+            # The runtime Task contract still owns the question, so restore it
+            # from the canonical benchmark record before validation/execution.
+            task = Task.from_dict({**plan, "question": plan_record.get("question", "")})
             runner = Runner(
                 model_registry=registry,
                 max_worker_tokens=max_worker_tokens,
@@ -255,6 +319,10 @@ async def run_workflow_benchmark(
         except Exception as exc:  # A failed workflow must not abort the evaluation set.
             record["error_type"] = type(exc).__name__
             record["error"] = f"{type(exc).__name__}: {exc}"
+
+        # Judging happens after the runner has completed (or failed) but before
+        # the record is visible to a resume run.
+        await judge_completed_record(record)
 
         async with write_lock:
             with results_path.open("a", encoding="utf-8") as stream:
@@ -369,7 +437,7 @@ async def _run_batched_workflow_benchmark(
             if not isinstance(plan, dict) or plan_record.get("error"):
                 detail = plan_record.get("error") or "record does not contain a valid plan"
                 raise ValueError(f"Plan unavailable: {detail}")
-            task = Task.from_dict(plan)
+            task = Task.from_dict({**plan, "question": plan_record.get("question", "")})
             validate_task(task, registry)
             state.update(
                 task=task,
@@ -506,6 +574,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description="Execute, judge, and summarize pregenerated conductor workflows.",
     )
     parser.add_argument("--plans", type=Path, required=True, help="plans.jsonl or its containing directory")
+    parser.add_argument(
+        "--planner-model-id",
+        help="Execute only plans produced by this conductor model ID.",
+    )
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--offset", type=int, default=0, help="Skip the first N plan records")
@@ -556,12 +628,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--bootstrap-samples", type=int, default=10_000)
     parser.add_argument("--judge", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--judge-base-url", default=os.getenv("KIMI_BASE_URL", DEFAULT_JUDGE_BASE_URL))
-    parser.add_argument("--judge-api-key", default=os.getenv("KIMI_API_KEY", "change-this"))
-    parser.add_argument("--judge-model", default=os.getenv("KIMI_MODEL", DEFAULT_JUDGE_MODEL))
-    parser.add_argument("--fallback-judge-base-url", default=os.getenv("GLM_BASE_URL", DEFAULT_FALLBACK_JUDGE_BASE_URL))
-    parser.add_argument("--fallback-judge-api-key", default=os.getenv("GLM_API_KEY", "change-this"))
-    parser.add_argument("--fallback-judge-model", default=os.getenv("GLM_MODEL", DEFAULT_FALLBACK_JUDGE_MODEL))
+    parser.add_argument(
+        "--judge-immediately",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Grade each workflow before its completed result is checkpointed (default).",
+    )
+    parser.add_argument("--judge-base-url", default=os.getenv("JUDGE_BASE_URL", DEFAULT_WORKFLOW_JUDGE_BASE_URL))
+    parser.add_argument("--judge-api-key", default=os.getenv("JUDGE_API_KEY", os.getenv("OPENROUTER_API_KEY", "change-this")))
+    parser.add_argument("--judge-model", default=os.getenv("JUDGE_MODEL", DEFAULT_WORKFLOW_JUDGE_MODEL))
+    parser.add_argument("--fallback-judge-base-url", default=os.getenv("FALLBACK_JUDGE_BASE_URL", ""))
+    parser.add_argument("--fallback-judge-api-key", default=os.getenv("FALLBACK_JUDGE_API_KEY", ""))
+    parser.add_argument("--fallback-judge-model", default=os.getenv("FALLBACK_JUDGE_MODEL", ""))
     parser.add_argument("--judge-concurrency", type=int, default=8)
     parser.add_argument("--judge-batch-size", type=int, default=10)
     parser.add_argument("--judge-max-tokens", type=int, default=8192)
@@ -571,8 +649,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
-    args = parse_args(argv)
     load_dotenv()
+    args = parse_args(argv)
     if args.offset < 0:
         raise ValueError("offset must be non-negative")
     if args.max_samples is not None and args.max_samples < 0:
@@ -588,6 +666,13 @@ async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
         token_limit_mode = "model_output_limits"
         max_worker_tokens = None
     plan_records = _load_plans(args.plans)
+    if args.planner_model_id:
+        plan_records = [
+            record for record in plan_records
+            if record.get("planner_model_id") == args.planner_model_id
+        ]
+        if not plan_records:
+            raise ValueError(f"No plans found for planner model {args.planner_model_id!r}")
     unfiltered_plan_count = len(plan_records)
     if not args.include_multimodal:
         from .data import load_conductor_dataset
@@ -609,6 +694,21 @@ async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
         worker_batch_size=args.worker_batch_size,
     )
     results_path = args.output_dir / RESULTS_FILENAME
+    judge = fallback = None
+    if args.judge:
+        judge = OpenAICompatibleClient(
+            base_url=args.judge_base_url,
+            api_key=args.judge_api_key,
+            model=args.judge_model,
+            max_retries=0,
+        )
+        if args.fallback_judge_model:
+            fallback = OpenAICompatibleClient(
+                base_url=args.fallback_judge_base_url or args.judge_base_url,
+                api_key=args.fallback_judge_api_key or args.judge_api_key,
+                model=args.fallback_judge_model,
+                max_retries=0,
+            )
     records = await run_workflow_benchmark(
         registry=registry,
         plan_records=plan_records,
@@ -621,25 +721,21 @@ async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
         retry_failures=args.retry_failures,
         batch_workers=args.batch_workers,
         worker_batch_size=args.worker_batch_size,
+        judge_client=judge if args.judge_immediately else None,
+        judge_model=args.judge_model,
+        fallback_judge_client=fallback if args.judge_immediately else None,
+        fallback_judge_model=args.fallback_judge_model or None,
+        judge_concurrency=args.judge_concurrency,
+        judge_max_tokens=args.judge_max_tokens,
+        judge_attempts=args.judge_attempts,
     )
     all_records, _ = load_results(results_path)
     selected_keys = {_record_key(record) for record in records}
     # Judging checkpoints rewrite all result configurations in the file, so
     # select the current run from that exact object graph before mutating it.
     records = [record for record in all_records if _record_key(record) in selected_keys]
-    if args.judge:
-        judge = OpenAICompatibleClient(
-            base_url=args.judge_base_url,
-            api_key=args.judge_api_key,
-            model=args.judge_model,
-            max_retries=0,
-        )
-        fallback = OpenAICompatibleClient(
-            base_url=args.fallback_judge_base_url,
-            api_key=args.fallback_judge_api_key,
-            model=args.fallback_judge_model,
-            max_retries=0,
-        )
+    if args.judge and not args.judge_immediately:
+        assert judge is not None
         await judge_records_with_checkpoints(
             records,
             all_records=all_records,
@@ -647,7 +743,7 @@ async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
             client=judge,
             judge_model=args.judge_model,
             fallback_client=fallback,
-            fallback_judge_model=args.fallback_judge_model,
+            fallback_judge_model=args.fallback_judge_model or "",
             concurrency=args.judge_concurrency,
             batch_size=args.judge_batch_size,
             max_tokens=args.judge_max_tokens,
@@ -656,6 +752,7 @@ async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
         )
     summary = {
         "plans": str(args.plans),
+        "planner_model_id": args.planner_model_id,
         "dataset": "hle-all" if args.include_multimodal else "hle-text",
         "text_only": not args.include_multimodal,
         "unfiltered_plan_count": unfiltered_plan_count,
@@ -672,6 +769,7 @@ async def async_main(argv: Sequence[str] | None = None) -> dict[str, Any]:
         "worker_token_limit_mode": token_limit_mode,
         "retry_failures": args.retry_failures,
         "judge_enabled": args.judge,
+        "judge_immediately": args.judge_immediately if args.judge else False,
         "judge_model": args.judge_model if args.judge else None,
         "fallback_judge_model": args.fallback_judge_model if args.judge else None,
         **summarize_workflows(records, bootstrap_samples=args.bootstrap_samples, seed=args.seed),

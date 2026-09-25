@@ -4,7 +4,7 @@
   "workflow": [
     {
       "step_id": "final",
-      "model_id": "gpt-5.5",
+      "model_id": "gpt-6-astra",
       "instruction": "Solve the problem as a single expert. Derive the first-order correction from the harmonic-oscillator ground-state expectation value of x^4, keep all factors of hbar, m, and omega explicit, and state the result including the unperturbed ground-state energy. Briefly indicate the order in lambda being neglected.",
       "access_list": ["question"]
     }

@@ -113,8 +113,8 @@ def test_frontier_config_contains_requested_openrouter_models_and_pricing():
         model_id: registry.get(model_id).max_output_tokens
         for model_id in registry.model_ids()
     } == {
-        "gpt-5.5": 32_768,
-        "claude-opus-4.8": 65_536,
+        "gpt-6-astra": 32_768,
+        "claude-fable-5.1": 65_536,
         "gemini-3.7-flash": 12_288,
         "glm-5.3": 65_536,
         "kimi-k3": 32_768,
@@ -132,7 +132,7 @@ def test_frontier_config_contains_requested_openrouter_models_and_pricing():
         model_id
         for model_id in registry.model_ids()
         if registry.get(model_id).client.supports_batch
-    } == {"gpt-5.5", "claude-opus-4.8", "gemini-3.7-flash", "kimi-k3"}
+    } == {"gpt-6-astra", "claude-fable-5.1", "gemini-3.7-flash", "kimi-k3"}
     assert all(
         registry.get(model_id).client.batch_backend == "openrouter"
         for model_id in registry.model_ids()

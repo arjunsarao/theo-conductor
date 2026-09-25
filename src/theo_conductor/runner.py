@@ -1,12 +1,14 @@
 import asyncio
 from collections.abc import Callable
+from dataclasses import replace
 import json
 import time
 from typing import Any
 
 from .artifact import ArtifactStore
 from .scheduler import topological_sort
-from .schema import ModelSpec, Task, RunResult, StepOutput, Step
+from .schema import ModelSpec, Task, RunResult, StepOutput, Step, ToolCallRecord
+from .tools import ToolExecutionContext, ToolRegistry, default_tool_registry
 from .models.registry import ModelRegistry
 from .validate import validate_task
 
@@ -36,27 +38,51 @@ def _usage_with_estimated_cost(
             pass
     return usage
 
+def _merge_usage(
+    total: dict[str, Any] | None,
+    current: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not current:
+        return total
+    merged = dict(total or {})
+    for key, value in current.items():
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            merged[key] = merged.get(key, 0) + value
+        else:
+            merged[key] = value
+    return merged
+
 
 class Runner:
     def __init__(
         self,
         model_registry: ModelRegistry,
-        tool_registry=None,
+        tool_registry: ToolRegistry | None = None,
         event_handler: Callable[[str, Step, StepOutput | None], None] | None = None,
         artifact_store: ArtifactStore | None = None,
         max_worker_tokens: int | None = None,
         use_model_output_limits: bool = False,
         worker_temperature: float = 0.2,
+        max_tool_rounds: int = 8,
+        tool_services: dict[str, Any] | None = None,
+        ask_user_for_clarification: bool = False,
     ) -> None:
         if max_worker_tokens is not None and max_worker_tokens <= 0:
             raise ValueError("max_worker_tokens must be positive")
+        if max_tool_rounds <= 0:
+            raise ValueError("max_tool_rounds must be positive")
         self.model_registry = model_registry
-        self.tool_registry = tool_registry
+        self.tool_registry = (
+            tool_registry if tool_registry is not None
+            else default_tool_registry(model_registry, ask_user=ask_user_for_clarification)
+        )
         self.artifact_store = artifact_store
         self.event_handler = event_handler
         self.max_worker_tokens = max_worker_tokens
         self.use_model_output_limits = use_model_output_limits
         self.worker_temperature = worker_temperature
+        self.max_tool_rounds = max_tool_rounds
+        self.tool_services = dict(tool_services or {})
 
     async def run(self, task: Task) -> RunResult:
         started_at = time.perf_counter()
@@ -98,8 +124,72 @@ class Runner:
         if self.event_handler:
             self.event_handler("started", step, None)
         spec, request = self.prepare_step(step, task, outputs)
+        if step.needs_tools and not self.tool_registry:
+            raise ValueError(f"Step {step.step_id!r} needs tools, but no tools are registered")
+        if self.tool_registry and spec.supports_tools:
+            return await self._run_step_with_tools(step, task, outputs, spec, request)
         response = await spec.client.generate(**request)
         return self.complete_step(step, spec, response)
+
+    async def _run_step_with_tools(
+        self,
+        step: Step,
+        task: Task,
+        outputs: dict[str, StepOutput],
+        spec: ModelSpec,
+        request: dict[str, Any],
+    ) -> StepOutput:
+        records: list[ToolCallRecord] = []
+        messages: list[dict[str, Any]] | None = None
+        aggregate_usage: dict[str, Any] | None = None
+        aggregate_latency_ms = 0.0
+        tool_rounds = 0
+        services = dict(self.tool_services)
+        if self.artifact_store is not None:
+            services.setdefault("artifact_store", self.artifact_store)
+        context = ToolExecutionContext(
+            task=task,
+            step=step,
+            outputs=outputs,
+            services=services,
+        )
+
+        while True:
+            call_request = {**request, "tools": self.tool_registry.declarations()}
+            if messages is not None:
+                call_request["messages"] = messages
+            response = await spec.client.generate(**call_request)
+            aggregate_usage = _merge_usage(aggregate_usage, response.usage)
+            aggregate_latency_ms += response.latency_ms or 0.0
+
+            if not response.tool_calls:
+                final_response = replace(
+                    response,
+                    usage=aggregate_usage,
+                    latency_ms=aggregate_latency_ms,
+                )
+                return self.complete_step(step, spec, final_response, tool_calls=records)
+
+            tool_rounds += 1
+            if tool_rounds > self.max_tool_rounds:
+                raise RuntimeError(
+                    f"Step {step.step_id!r} exceeded {self.max_tool_rounds} tool rounds"
+                )
+            if response.conversation is None:
+                raise RuntimeError("Tool-calling model response omitted conversation state")
+
+            messages = list(response.conversation)
+            for call in response.tool_calls:
+                record = await self.tool_registry.execute(
+                    call,
+                    context,
+                )
+                records.append(record)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.call_id,
+                    "content": json.dumps(record.result, ensure_ascii=False),
+                })
 
     def prepare_step(
         self,
@@ -148,7 +238,13 @@ class Runner:
             "temperature": self.worker_temperature,
         }
 
-    def complete_step(self, step: Step, spec: ModelSpec, response: Any) -> StepOutput:
+    def complete_step(
+        self,
+        step: Step,
+        spec: ModelSpec,
+        response: Any,
+        tool_calls: list[ToolCallRecord] | None = None,
+    ) -> StepOutput:
         """Convert a client response into the established worker output."""
         output = StepOutput(
             step_id=step.step_id,
@@ -157,6 +253,7 @@ class Runner:
             usage=_usage_with_estimated_cost(response.usage, spec),
             latency_ms=response.latency_ms,
             finish_reason=response.finish_reason,
+            tool_calls=tool_calls or [],
         )
         if self.event_handler:
             self.event_handler("completed", step, output)

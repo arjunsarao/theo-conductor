@@ -226,14 +226,28 @@ OPENROUTER_API_KEY=... uv run theo-workflow-benchmark \
   --concurrency 2
 ```
 
-The default Kimi judge and GLM fallback use `KIMI_API_KEY` and `GLM_API_KEY`.
-Pass `--no-judge` to validate workflow execution before configuring those
-services. Rerunning the same command resumes completed workflows and judge
-verdicts. Increase `--max-samples` to `50`, then `500`. Subsequent 500-item
+Workflow benchmarking uses OpenRouter's `~deepseek/deepseek-flash-latest` by
+default and judges each workflow before its completed JSONL checkpoint is
+written; it therefore only requires `OPENROUTER_API_KEY`. Pass `--no-judge` to
+validate workflow execution before configuring the judge, or
+`--no-judge-immediately` to retain the older after-run batched judging mode.
+Rerunning the same command resumes completed workflows and judge verdicts.
+Increase `--max-samples` to `50`, then `500`. Subsequent 500-item
 shards can use `--offset 500`, `--offset 1000`, and so on; use a distinct
 output directory for each official scored configuration. After fixing a
 transient endpoint or credential failure, add `--retry-failures` to replace
 the latest failed records without repeating successful workflows.
+
+To run a fresh GPT-6 Astra conductor benchmark on the canonical 202-question
+HLE Physics text subset, submit the dedicated Slurm job:
+
+```bash
+sbatch scripts/benchmark_gpt6_frontier_hle_physics.sbatch
+```
+
+It first has GPT-6 Astra generate all 202 workflow plans, then uses
+`worker_pool_frontier.yaml` to execute them and checkpoints a DeepSeek Flash
+verdict as soon as each workflow completes.
 
 ### Dependency-layer worker batching
 

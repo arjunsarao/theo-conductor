@@ -6,7 +6,8 @@ from typing import Any
 
 import httpx
 from openai import AsyncOpenAI
-from theo_conductor.schema import ModelResponse
+from theo_conductor.schema import ModelResponse, ToolCall
+from theo_conductor.worker_prompt import build_worker_prompt
 
 
 class OpenAICompatibleClient:
@@ -57,6 +58,8 @@ class OpenAICompatibleClient:
         max_tokens: int | None = None,
         temperature: float | None = None,
         response_format: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        messages: list[dict[str, Any]] | None = None,
     ):
         request = self.build_request(
             instruction=instruction,
@@ -65,13 +68,16 @@ class OpenAICompatibleClient:
             max_tokens=max_tokens,
             temperature=temperature,
             response_format=response_format,
+            tools=tools,
+            messages=messages,
         )
         start = time.perf_counter()
         completion = await self.client.chat.completions.create(
             **request,
         )
         latency_ms = (time.perf_counter() - start) * 1000
-        return model_response_from_completion(completion, latency_ms=latency_ms)
+        return model_response_from_completion(
+            completion, latency_ms=latency_ms, conversation_prefix=request["messages"])
 
     def build_request(
         self,
@@ -82,15 +88,20 @@ class OpenAICompatibleClient:
         max_tokens: int | None = None,
         temperature: float | None = None,
         response_format: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        messages: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         request: dict[str, Any] = {
             "model": self.model,
-            "messages": build_message(instruction=instruction, question=question, context=context),
+            "messages": messages or build_message(
+                instruction=instruction, question=question, context=context),
             "max_tokens": max_tokens or 2048,
             "temperature": temperature if temperature is not None else 0.2,
         }
         if response_format is not None:
             request["response_format"] = response_format
+        if tools:
+            request.update(tools=tools, tool_choice="auto")
         return request
 
     async def generate_batch(
@@ -205,16 +216,54 @@ class OpenAICompatibleClient:
         )
 
 
-def model_response_from_completion(completion: Any, *, latency_ms: float) -> ModelResponse:
+def _message_dict(message: Any) -> dict[str, Any]:
+    if isinstance(message, dict):
+        return dict(message)
+    if hasattr(message, "model_dump"):
+        return message.model_dump(exclude_none=True)
+    if hasattr(message, "__dict__"):
+        return {key: value for key, value in vars(message).items() if value is not None}
+    raise TypeError(f"Unsupported completion message: {type(message).__name__}")
 
+
+def _tool_calls(message: dict[str, Any]) -> tuple[ToolCall, ...]:
+    calls = []
+    for index, item in enumerate(message.get("tool_calls") or []):
+        item = _message_dict(item)
+        function = item.get("function") or {}
+        function = _message_dict(function)
+        raw_arguments = function.get("arguments") or "{}"
+        try:
+            arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+            if not isinstance(arguments, dict):
+                raise ValueError("tool arguments must decode to an object")
+        except (json.JSONDecodeError, ValueError) as exc:
+            arguments = {"_invalid_arguments": raw_arguments, "_parse_error": str(exc)}
+        calls.append(ToolCall(
+            call_id=str(item.get("id") or f"tool-call-{index}"),
+            name=str(function.get("name") or ""),
+            arguments=arguments,
+        ))
+    return tuple(calls)
+
+
+def model_response_from_completion(
+    completion: Any,
+    *,
+    latency_ms: float,
+    conversation_prefix: list[dict[str, Any]] | None = None,
+) -> ModelResponse:
     choice = completion.choices[0]
     usage = completion.usage.model_dump() if completion.usage is not None else None
+    message = _message_dict(choice.message)
     return ModelResponse(
-        text=choice.message.content or "",
+        text=message.get("content") or "",
         raw=completion,
         usage=usage,
         latency_ms=latency_ms,
         finish_reason=getattr(choice, "finish_reason", None),
+        tool_calls=_tool_calls(message),
+        conversation=[*(conversation_prefix or []), message],
     )
 
 
@@ -230,6 +279,8 @@ def model_response_from_body(body: dict[str, Any], *, latency_ms: float) -> Mode
         usage=body.get("usage"),
         latency_ms=latency_ms,
         finish_reason=choice.get("finish_reason"),
+        tool_calls=_tool_calls(message),
+        conversation=[message],
     )
 
 
@@ -270,26 +321,6 @@ def batch_results_from_items(
 
 
 def build_message(*, instruction: str, question: str, context: dict[str, Any]) -> list[dict[str, str]]:
-    context_blocks = []
-
-    for step_id, output in context.items():
-        if step_id == "artifacts":
-            context_blocks.append(f"<artifacts>{output}</artifacts>")
-        else:
-            context_blocks.append(f"<step_output id={step_id}>{output}</step_output>")
-
-    context_text = "\n".join(context_blocks)
-    user_content = f"""
-Original question:
-{question}
-
-Available context:
-{context_text if context_text else "(none)"}
-
-Your instruction:
-{instruction}
-"""
-
     return [
         {
             "role": "system",
@@ -297,6 +328,10 @@ Your instruction:
         },
         {
             "role": "user",
-            "content": user_content,
+            "content": build_worker_prompt(
+                instruction=instruction,
+                question=question,
+                context=context,
+            ),
         },
     ]
