@@ -1,9 +1,0 @@
-setup,run_path,total_correct,total_questions,"Atomic, Molecular & Optical Physics",Condensed Matter Physics,Electromagnetism,Experimental & Applied Physics,Fluid & Plasma Dynamics,"Gravitation, Cosmology & Astrophysics",High Energy & Particle Physics,Mathematical Physics,Nonlinear Dynamics & Classical Mechanics,Nuclear Physics,Optics & Photonics,"Quantum Information, Science & Technology",Statistical Physics & Thermodynamics
-GPT-5.5 (direct),outputs/gpt-5.5-benchmark/results.jsonl,105,202,26,36,23,28,7,17,14,72,34,4,13,24,17
-GPT-6 Astra (direct batch),outputs/gpt-6-benchmark/results.jsonl,106,202,20,39,25,28,7,17,21,71,28,9,12,19,22
-Claude Opus 4.8 (direct),outputs/opus-4.8-benchmark/results.jsonl,80,202,19,26,13,20,4,13,14,53,28,11,10,13,16
-Qwen3.8-27B (direct),outputs/qwen-3-8-benchmark/results.jsonl,74,202,17,27,17,26,3,11,9,52,23,4,8,13,12
-"Theo Conductor (Qwen3.8 plans, frontier workers)",outputs/qwen-3-8-eval-frontier/results.jsonl,85,202,17,36,18,22,3,11,15,59,22,10,11,13,18
-"Theo Conductor (Qwen3.8 plans, flash workers)",outputs/qwen-3-8-eval-flash/results.jsonl,85,202,17,30,18,24,8,14,11,58,26,5,11,17,16
-"Theo Conductor (GPT-6 Astra plans, frontier workers)",outputs/gpt-6-eval-frontier/results.jsonl,105,202,22,37,24,29,7,17,19,69,31,8,14,16,22
-"Theo Conductor (GPT-6 Astra clarification plans, frontier workers)",outputs/gpt-6-eval-frontier-clarification/results.jsonl,108,202,21,41,27,30,7,18,18,68,29,8,14,19,24
