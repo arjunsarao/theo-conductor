@@ -38,9 +38,8 @@ from theo_conductor.models.registry import ModelRegistry
 from theo_conductor.prompt import (
     build_conductor_json_schema,
     build_conductor_prompt,
-    build_default_examples,
     build_prompt,
-    build_worker_model_lines,
+    load_conductor_prompt,
 )
 from theo_conductor.runner import Runner
 from theo_conductor.traces import TrainingTraceLogger
@@ -188,8 +187,7 @@ def prepare_grpo_dataset(
     return dataset.map(
         _format_grpo_row,
         fn_kwargs={
-            "model_lines": build_worker_model_lines(model_registry),
-            "examples": build_default_examples(model_registry),
+            "prompt_template": load_conductor_prompt(),
         },
     )
 
@@ -197,17 +195,11 @@ def prepare_grpo_dataset(
 def _format_grpo_row(
     row: dict[str, Any],
     *,
-    model_lines: list[str],
-    examples: list[str],
+    prompt_template: str,
 ) -> dict[str, Any]:
     question = row["question"]
     return {
-        "prompt": build_prompt(
-            model_lines,
-            ["No external tools are available."],
-            examples,
-            question,
-        ),
+        "prompt": build_prompt(question, prompt_template=prompt_template),
         "question": question,
         "answer": row["answer"],
         "answer_type": row.get("answer_type"),

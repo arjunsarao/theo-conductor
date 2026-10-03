@@ -27,7 +27,8 @@ from .models.registry import ModelRegistry
 from .plan import PLAN_FILENAME, load_plan_records
 from .runner import Runner
 from .scheduler import topological_sort
-from .schema import Task
+from .schema import Task, StepOutput
+from .jsonio import write_json_atomic
 from .validate import validate_task
 
 
@@ -163,6 +164,7 @@ def _base_result(
         "benchmark_position": plan_record.get("dataset_index"),
         "subject": plan_record.get("subject"),
         "question": plan_record.get("question"),
+        "image": plan_record.get("image"),
         "gold_answer": plan_record.get("gold_answer"),
         "reference_answer": plan_record.get("reference_answer"),
         "answer_type": plan_record.get("answer_type"),
@@ -273,9 +275,13 @@ async def run_workflow_benchmark(
         plan_sha256 = _json_hash(plan)
         key = (str(plan_record.get("dataset_id")), plan_sha256, execution_config_sha256)
         selected_keys.add(key)
-        if key in completed and not (
+        if key in completed and existing_by_key[key].get("question") == plan_record.get("question") and existing_by_key[key].get("image") == plan_record.get("image") and not (
             retry_failures and existing_by_key[key].get("error") is not None
         ):
+            if judge_client is not None:
+                await judge_completed_record(existing_by_key[key])
+                async with write_lock:
+                    write_results_atomic(results_path, list(existing_by_key.values()))
             return
 
         record = _base_result(
@@ -283,6 +289,19 @@ async def run_workflow_benchmark(
             plan_sha256=plan_sha256,
             config_sha256=execution_config_sha256,
         )
+        checkpoint_path = results_path.parent / ".workflow-checkpoints" / f"{_json_hash([key, plan_record.get('question'), plan_record.get('image')])}.json"
+        saved = json.loads(checkpoint_path.read_text()) if checkpoint_path.exists() else {}
+        record["worker_outputs"] = saved.get("worker_outputs", {})
+
+        async def checkpoint(step, output, error):
+            if output is not None:
+                record["worker_outputs"][step.step_id] = output.model_dump(mode="json")
+            record.setdefault("step_failures", {})
+            if error:
+                record["step_failures"][step.step_id] = {"reason": getattr(error, "reason", type(error).__name__), "error": str(error)}
+            else:
+                record["step_failures"].pop(step.step_id, None)
+            write_json_atomic(checkpoint_path, record)
         try:
             if not isinstance(plan, dict) or plan_record.get("error"):
                 detail = plan_record.get("error") or "record does not contain a valid plan"
@@ -291,7 +310,11 @@ async def run_workflow_benchmark(
             # structured workflow rather than duplicating it inside `plan`.
             # The runtime Task contract still owns the question, so restore it
             # from the canonical benchmark record before validation/execution.
-            task = Task.from_dict({**plan, "question": plan_record.get("question", "")})
+            task = Task.from_dict({
+                **plan,
+                "question": plan_record.get("question", ""),
+                "image": plan_record.get("image"),
+            })
             runner = Runner(
                 model_registry=registry,
                 max_worker_tokens=max_worker_tokens,
@@ -299,7 +322,8 @@ async def run_workflow_benchmark(
                 worker_temperature=worker_temperature,
             )
             async with semaphore:
-                result = await runner.run(task)
+                result = await runner.run(task, initial_outputs={key: StepOutput(**value) for key, value in record["worker_outputs"].items()},
+                                          checkpoint=checkpoint, fail_on_incomplete=True)
             outputs = {
                 step_id: output.model_dump(mode="json")
                 for step_id, output in result.outputs.items()
@@ -319,6 +343,7 @@ async def run_workflow_benchmark(
         except Exception as exc:  # A failed workflow must not abort the evaluation set.
             record["error_type"] = type(exc).__name__
             record["error"] = f"{type(exc).__name__}: {exc}"
+            record.update(**_usage_totals(record["worker_outputs"]))
 
         # Judging happens after the runner has completed (or failed) but before
         # the record is visible to a resume run.
@@ -437,7 +462,11 @@ async def _run_batched_workflow_benchmark(
             if not isinstance(plan, dict) or plan_record.get("error"):
                 detail = plan_record.get("error") or "record does not contain a valid plan"
                 raise ValueError(f"Plan unavailable: {detail}")
-            task = Task.from_dict({**plan, "question": plan_record.get("question", "")})
+            task = Task.from_dict({
+                **plan,
+                "question": plan_record.get("question", ""),
+                "image": plan_record.get("image"),
+            })
             validate_task(task, registry)
             state.update(
                 task=task,

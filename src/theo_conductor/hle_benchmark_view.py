@@ -2,11 +2,30 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from math import comb
 from pathlib import Path
 from statistics import mean
 from typing import Any
 
 from .workflow_benchmark import load_results
+
+
+PHYSICS_TOPIC_TAGS = (
+    "Condensed Matter Physics",
+    "Quantum Information, Science & Technology",
+    "Atomic, Molecular & Optical Physics",
+    "High Energy & Particle Physics",
+    "Mathematical Physics",
+    "Gravitation, Cosmology & Astrophysics",
+    "Statistical Physics & Thermodynamics",
+    "Nuclear Physics",
+    "Nonlinear Dynamics & Classical Mechanics",
+    "Fluid & Plasma Dynamics",
+    "Biophysics",
+    "Electromagnetism",
+    "Optics & Photonics",
+    "Experimental & Applied Physics",
+)
 
 
 def result_outcome(record: dict[str, Any]) -> str:
@@ -18,6 +37,65 @@ def result_outcome(record: dict[str, Any]) -> str:
     if record.get("correct") is False:
         return "incorrect"
     return "unjudged"
+
+
+def load_primary_topic_classifications(path: Path) -> dict[str, str]:
+    """Load validated HLE ID to primary physics-topic mappings from JSONL."""
+    topics: dict[str, str] = {}
+    with path.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, 1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Invalid classification on line {line_number}: {exc}") from exc
+            if not isinstance(record, dict):
+                raise ValueError(f"Classification on line {line_number} is not a JSON object")
+            example_id = str(record.get("id") or "")
+            topic = str(record.get("tag_1") or "")
+            if not example_id:
+                raise ValueError(f"Classification on line {line_number} has no id")
+            if topic not in PHYSICS_TOPIC_TAGS:
+                raise ValueError(
+                    f"Classification on line {line_number} has unknown primary topic {topic!r}"
+                )
+            topics[example_id] = topic
+    return topics
+
+
+def topic_success_rows(
+    records: list[dict[str, Any]],
+    primary_topics: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Aggregate judged success rates by primary physics topic."""
+    counts = {
+        topic: {"Questions": 0, "Scored": 0, "Correct": 0}
+        for topic in PHYSICS_TOPIC_TAGS
+    }
+    for record in records:
+        topic = primary_topics.get(str(record.get("example_id") or ""))
+        if topic is None:
+            continue
+        counts[topic]["Questions"] += 1
+        outcome = result_outcome(record)
+        if outcome not in ("correct", "incorrect"):
+            continue
+        counts[topic]["Scored"] += 1
+        counts[topic]["Correct"] += outcome == "correct"
+
+    rows = []
+    for order, topic in enumerate(PHYSICS_TOPIC_TAGS):
+        scored = counts[topic]["Scored"]
+        rows.append(
+            {
+                "Topic": topic,
+                "Order": order,
+                **counts[topic],
+                "Success rate": counts[topic]["Correct"] / scored if scored else None,
+            }
+        )
+    return rows
 
 
 def discover_hle_direct_benchmarks(root: Path) -> dict[str, tuple[Path, Path]]:
@@ -289,6 +367,18 @@ def benchmark_record_map(
 ) -> dict[str, dict[str, Any]]:
     """Index results by question, preferring a later retry when one exists."""
     return {benchmark_record_key(record): record for record in records}
+
+
+def exact_mcnemar_p_value(gained: int, regressed: int) -> float:
+    """Return the two-sided exact McNemar p-value for discordant pairs."""
+    if gained < 0 or regressed < 0:
+        raise ValueError("McNemar counts must be non-negative")
+    discordant = gained + regressed
+    if discordant == 0:
+        return 1.0
+    smaller = min(gained, regressed)
+    lower_tail = sum(comb(discordant, k) for k in range(smaller + 1)) / (2**discordant)
+    return min(1.0, 2.0 * lower_tail)
 
 
 def capability_comparison(

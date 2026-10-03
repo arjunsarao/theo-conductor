@@ -14,7 +14,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-from .data import TRAINING_DATASETS, build_conductor_splits, load_conductor_dataset
+from .data import BENCHMARK_DATASETS, build_conductor_splits, load_conductor_dataset
 from .models.registry import ModelRegistry
 from .models.openai_compat import OpenAICompatibleClient
 
@@ -37,9 +37,18 @@ the reference. Reject answers with a substantive contradiction, wrong value, mis
 reasoning whose final conclusion is wrong. Judge the candidate's actual answer, not formatting such as
 whether it used FINAL:.
 """
+RUBRIC_JUDGE_INSTRUCTION = """You are an exacting but fair evaluator of scientific research solutions.
+For each item, full_gold_answer contains the question's ten-point grading rubric.
+Assess the full candidate_response against every rubric criterion, including intermediate
+reasoning. Award only the points supported by the response, using each criterion's stated
+weights and partial-credit rules. Do not infer omitted reasoning from a correct final answer.
+Return a score from 0 to 10 and a reason explaining the points awarded per criterion.
+The score must be the sum of those points. A score of at least 7 is considered correct;
+the caller applies this threshold. Evaluate each item independently.
+"""
 
 
-def build_judge_response_format(expected_ids: Sequence[str]) -> dict[str, Any]:
+def build_judge_response_format(expected_ids: Sequence[str], *, rubric: bool = False) -> dict[str, Any]:
     """Build the strict structured-output contract for one judge request."""
     if not expected_ids:
         raise ValueError("judge response schema requires at least one id")
@@ -54,10 +63,11 @@ def build_judge_response_format(expected_ids: Sequence[str]) -> dict[str, Any]:
                     "type": "object",
                     "properties": {
                         "id": {"type": "string", "enum": list(expected_ids)},
-                        "correct": {"type": "boolean"},
+                        **({"score": {"type": "number", "minimum": 0, "maximum": 10}}
+                           if rubric else {"correct": {"type": "boolean"}}),
                         "reason": {"type": "string", "minLength": 1},
                     },
-                    "required": ["id", "correct", "reason"],
+                    "required": ["id", "score" if rubric else "correct", "reason"],
                     "additionalProperties": False,
                 },
                 "minItems": len(expected_ids),
@@ -131,6 +141,36 @@ def build_judge_batch_question(batch: Sequence[tuple[str, dict[str, Any]]]) -> s
     return "Evaluate every item in this JSON array:\n" + json.dumps(items, ensure_ascii=False)
 
 
+def parse_rubric_judge_batch(text: str, expected_ids: Sequence[str]) -> dict[str, tuple[float, str]]:
+    """Validate numeric rubric scores and IDs without coercing invalid values."""
+    decoder = json.JSONDecoder()
+    payload = None
+    for index, char in enumerate(text):
+        if char != "[":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(text, index)
+            break
+        except json.JSONDecodeError:
+            continue
+    if not isinstance(payload, list):
+        raise ValueError("Judge response did not contain a JSON verdict array")
+    scores = {}
+    boolean_payload = []
+    for item in payload:
+        if not isinstance(item, dict):
+            raise ValueError("Each judge verdict must be an object")
+        score = item.get("score")
+        if not isinstance(item.get("id"), str):
+            raise ValueError("Judge verdict 'id' must be a non-empty string")
+        if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score) or not 0 <= score <= 10:
+            raise ValueError("Judge score must be a finite number from 0 to 10")
+        boolean_payload.append({"id": item.get("id"), "correct": score >= 7, "reason": item.get("reason")})
+        scores[item.get("id")] = score
+    validated = parse_judge_batch(json.dumps(boolean_payload), expected_ids)
+    return {item_id: (scores[item_id], reason) for item_id, (_, reason) in validated.items()}
+
+
 async def judge_records(
     records: Sequence[dict[str, Any]],
     *,
@@ -168,6 +208,7 @@ async def judge_records(
             record.get("judge_model") in accepted_judge_models
             and isinstance(record.get("judge_correct"), bool)
             and not record.get("judge_error")
+            and (record.get("answer_type") != "rubric10" or record.get("judge_scoring") == "rubric10-v1")
         )
         if already_judged and not force:
             continue
@@ -176,6 +217,7 @@ async def judge_records(
         record["judge_reason"] = None
         record["judge_response"] = None
         record["judge_error"] = None
+        record["judge_score"] = None
         if record.get("error") is not None or not record.get("response"):
             record.update(
                 judge_correct=False,
@@ -185,12 +227,16 @@ async def judge_records(
         else:
             pending.append(record)
 
-    batches = [pending[start : start + batch_size] for start in range(0, len(pending), batch_size)]
+    batches = []
+    for rubric in (False, True):
+        group = [record for record in pending if (record.get("answer_type") == "rubric10") == rubric]
+        batches.extend(group[start : start + batch_size] for start in range(0, len(group), batch_size))
 
     async def grade(batch_index: int, records_batch: Sequence[dict[str, Any]]) -> None:
         nonlocal completed
         identified_batch = [(f"batch-{batch_index}-item-{index}", record) for index, record in enumerate(records_batch)]
         expected_ids = [item_id for item_id, _ in identified_batch]
+        rubric = records_batch[0].get("answer_type") == "rubric10"
         backends = [(client, judge_model, max_tokens)]
         if fallback_client is not None:
             backends.append(
@@ -203,25 +249,29 @@ async def judge_records(
                 try:
                     async with semaphore:
                         response = await backend.generate(
-                            instruction=JUDGE_INSTRUCTION,
+                            instruction=RUBRIC_JUDGE_INSTRUCTION if rubric else JUDGE_INSTRUCTION,
                             question=build_judge_batch_question(identified_batch),
                             context={},
                             max_tokens=backend_max_tokens,
                             temperature=0.0,
-                            response_format=build_judge_response_format(expected_ids),
+                            response_format=build_judge_response_format(expected_ids, rubric=rubric),
                         )
-                    verdicts = parse_judge_batch(response.text, expected_ids)
+                    verdicts = (parse_rubric_judge_batch if rubric else parse_judge_batch)(response.text, expected_ids)
                     for item_id, record in identified_batch:
-                        correct, reason = verdicts[item_id]
+                        value, reason = verdicts[item_id]
+                        correct = value >= 7 if rubric else value
                         record.update(
                             judge_correct=correct,
                             judge_model=backend_model,
                             judge_reason=reason,
                             judge_response=json.dumps(
-                                {"id": item_id, "correct": correct, "reason": reason}, ensure_ascii=False
+                                {"id": item_id, "correct": correct, "reason": reason,
+                                 **({"score": value} if rubric else {})}, ensure_ascii=False
                             ),
                             judge_error=None,
                             correct=correct,
+                            judge_score=value if rubric else None,
+                            judge_scoring="rubric10-v1" if rubric else "boolean",
                         )
                     judged = True
                     break
@@ -251,13 +301,8 @@ async def judge_records(
 
 def write_results_atomic(path: Path, records: Sequence[dict[str, Any]]) -> None:
     """Replace a JSONL file only after its complete updated form is on disk."""
-    temporary = path.with_name(f".{path.name}.tmp")
-    with temporary.open("w", encoding="utf-8") as handle:
-        for record in records:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    temporary.replace(path)
+    from .jsonio import write_jsonl_atomic
+    write_jsonl_atomic(path, records)
 
 
 async def judge_records_with_checkpoints(
@@ -540,6 +585,8 @@ async def run_benchmark(
             "question": row["question"],
             "gold_answer": row["answer"],
             "reference_answer": row.get("reference_answer"),
+            "answer_type": row.get("answer_type"),
+            "track": row.get("track"),
             "response": None,
             "extracted_answer": None,
             "correct": None,
@@ -648,7 +695,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--config", type=Path, default=Path("configs/worker_pool_small.yaml"))
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/megascience-small-models"))
-    parser.add_argument("--dataset", choices=TRAINING_DATASETS, default="megascience")
+    parser.add_argument("--dataset", choices=BENCHMARK_DATASETS, default="megascience")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--total-samples",

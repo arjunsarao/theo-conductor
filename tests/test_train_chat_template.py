@@ -43,7 +43,7 @@ def test_resolve_chat_template_prefers_processor_template():
     assert resolve_chat_template(processor) == "processor-template"
 
 
-def test_build_conductor_prompt_uses_registry_model_ids():
+def test_build_conductor_prompt_uses_fulltext_catalogue():
     registry = ModelRegistry(
         [
             ModelSpec(
@@ -57,8 +57,8 @@ def test_build_conductor_prompt_uses_registry_model_ids():
 
     prompt = build_conductor_prompt("What is 2 + 2?", registry)
 
-    assert 'model_id="solver"' in prompt
-    assert "Physics Solver" in prompt
+    assert 'model_id="glm-5.3"' in prompt
+    assert "Physics Solver" not in prompt
     assert "What is 2 + 2?" in prompt
 
 
@@ -82,7 +82,7 @@ def test_prepare_grpo_dataset_adds_prompt_and_reward_columns():
     assert prepared[0]["answer"] == "A"
     assert prepared[0]["answer_type"] == "multipleChoice"
     assert prepared[0]["reference_answer"] == "The sum is four."
-    assert "Return only one valid JSON value matching this schema" in prepared[0]["prompt"]
+    assert prepared[0]["prompt"] == build_conductor_prompt("What is 2 + 2?", registry)
 
 
 def test_build_training_args_maps_train_config_to_grpo_config():

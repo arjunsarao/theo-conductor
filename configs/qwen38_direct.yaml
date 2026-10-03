@@ -9,7 +9,6 @@ models:
     supports_tools: true
     supports_json: true
     role: "direct HLE solver"
-    best_for: "Direct scientific and mathematical problem solving without conductor routing."
     client:
       type: openai_compatible
       base_url: http://127.0.0.1:8007/v1

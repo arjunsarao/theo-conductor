@@ -8,6 +8,7 @@ Run from the repository root with::
 from __future__ import annotations
 
 import json
+import math
 import sys
 from html import escape
 from collections import Counter
@@ -28,19 +29,26 @@ from theo_conductor.trace_analysis import (
     workflow_to_graphviz,
 )
 from theo_conductor.hle_benchmark_view import (
+    PHYSICS_TOPIC_TAGS,
     capability_comparison,
     clarification_rows,
     discover_hle_direct_benchmarks,
     discover_hle_benchmark_runs,
+    exact_mcnemar_p_value,
     hle_run_metrics,
     load_hle_benchmark as load_hle_benchmark_files,
+    load_primary_topic_classifications,
     pairwise_outcome_counts,
     result_outcome,
+    topic_success_rows,
     worker_step_rows,
 )
 
 
 ROOT = Path(__file__).resolve().parent
+TOPIC_CLASSIFICATIONS_PATH = (
+    ROOT / "outputs" / "hle-physics-classifications-gpt-5.6-sol" / "classifications.jsonl"
+)
 PAGE_SIZE = 80
 MEMORY_CHART_MAX_ROWS = 4_000
 GPU_ROLES = {
@@ -147,6 +155,9 @@ st.markdown(
         vertical-align: -0.08rem;
         width: 0.9rem;
     }
+    div[class*="st-key-capability-radar"] div[data-testid="stVegaLiteChart"] {
+        margin-inline: auto;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -248,6 +259,12 @@ def load_hle_benchmark_page(
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     del modified_ns
     return load_hle_benchmark_files(Path(summary_path), Path(results_path))
+
+
+@st.cache_data(show_spinner=False)
+def load_topic_classifications(path: str, modified_ns: int) -> dict[str, str]:
+    del modified_ns
+    return load_primary_topic_classifications(Path(path))
 
 
 @st.cache_data(show_spinner=False)
@@ -1464,6 +1481,164 @@ def _outcome_comparison_chart(rows: list[dict[str, Any]]) -> alt.Chart:
     )
 
 
+def _topic_radar_chart(
+    rows: list[dict[str, Any]],
+    *,
+    baseline_label: str,
+    candidate_label: str,
+) -> alt.LayerChart:
+    """Draw a two-run topic comparison in a shared Cartesian radar projection."""
+    topic_question_counts = {
+        topic: max(
+            (int(row["Questions"]) for row in rows if row["Topic"] == topic),
+            default=0,
+        )
+        for topic in PHYSICS_TOPIC_TAGS
+    }
+    topics = [topic for topic in PHYSICS_TOPIC_TAGS if topic_question_counts[topic] > 0]
+    topic_count = len(topics)
+    topic_orders = {topic: order for order, topic in enumerate(topics)}
+    short_labels = {
+        "Condensed Matter Physics": "Condensed matter",
+        "Quantum Information, Science & Technology": "Quantum info",
+        "Atomic, Molecular & Optical Physics": "AMO physics",
+        "High Energy & Particle Physics": "Particle physics",
+        "Mathematical Physics": "Mathematical",
+        "Gravitation, Cosmology & Astrophysics": "Gravity / astro",
+        "Statistical Physics & Thermodynamics": "Stat mech / thermo",
+        "Nuclear Physics": "Nuclear",
+        "Nonlinear Dynamics & Classical Mechanics": "Nonlinear / classical",
+        "Fluid & Plasma Dynamics": "Fluid / plasma",
+        "Biophysics": "Biophysics",
+        "Electromagnetism": "Electromagnetism",
+        "Optics & Photonics": "Optics / photonics",
+        "Experimental & Applied Physics": "Experimental / applied",
+    }
+
+    projected = []
+    for row in rows:
+        if row["Topic"] not in topic_orders:
+            continue
+        rate = row["Success rate"]
+        radius = float(rate) if rate is not None else 0.0
+        plot_order = topic_orders[str(row["Topic"])]
+        angle = math.pi / 2 - 2 * math.pi * plot_order / topic_count
+        projected.append(
+            {
+                **row,
+                "Series": "Candidate" if row["Name"] == candidate_label else "Baseline",
+                "Plot order": plot_order,
+                "Plot rate": radius,
+                "X": radius * math.cos(angle),
+                "Y": radius * math.sin(angle),
+            }
+        )
+    by_run: dict[str, list[dict[str, Any]]] = {}
+    for row in projected:
+        by_run.setdefault(str(row["Name"]), []).append(row)
+    closed = projected + [
+        {**min(run_rows, key=lambda row: row["Plot order"]), "Plot order": topic_count}
+        for run_rows in by_run.values()
+    ]
+
+    grid_rows = []
+    for radius in (0.2, 0.4, 0.6, 0.8, 1.0):
+        for order in range(topic_count + 1):
+            angle = math.pi / 2 - 2 * math.pi * (order % topic_count) / topic_count
+            grid_rows.append(
+                {
+                    "Radius": f"{radius:.0%}",
+                    "Order": order,
+                    "X": radius * math.cos(angle),
+                    "Y": radius * math.sin(angle),
+                }
+            )
+    axes = []
+    labels = []
+    for order, topic in enumerate(topics):
+        angle = math.pi / 2 - 2 * math.pi * order / topic_count
+        axes.append(
+            {"X": 0.0, "Y": 0.0, "X2": math.cos(angle), "Y2": math.sin(angle)}
+        )
+        labels.append(
+            {
+                "Label": f'{short_labels[topic]} (n={topic_question_counts[topic]:,})',
+                "X": 1.14 * math.cos(angle),
+                "Y": 1.14 * math.sin(angle),
+            }
+        )
+    ring_labels = [
+        {"Label": f"{radius:.0%}", "X": 0.035, "Y": radius}
+        for radius in (0.2, 0.4, 0.6, 0.8, 1.0)
+    ]
+
+    position = {
+        "x": alt.X("X:Q", axis=None, scale=alt.Scale(domain=[-1.35, 1.35])),
+        "y": alt.Y("Y:Q", axis=None, scale=alt.Scale(domain=[-1.28, 1.28])),
+    }
+    grid = (
+        alt.Chart(pd.DataFrame(grid_rows))
+        .mark_line(color="#c7cdd4", strokeWidth=1)
+        .encode(**position, detail="Radius:N", order="Order:Q")
+    )
+    spokes = (
+        alt.Chart(pd.DataFrame(axes))
+        .mark_rule(color="#d9dde2", strokeWidth=1)
+        .encode(**position, x2="X2:Q", y2="Y2:Q")
+    )
+    label_layer = (
+        alt.Chart(pd.DataFrame(labels))
+        .mark_text(fontSize=12, color="#111111")
+        .encode(**position, text="Label:N")
+    )
+    ring_label_layer = (
+        alt.Chart(pd.DataFrame(ring_labels))
+        .mark_text(fontSize=10, color="#929292", align="left", baseline="bottom")
+        .encode(**position, text="Label:N")
+    )
+    candidate_fill = (
+        alt.Chart(pd.DataFrame(closed))
+        .transform_filter(alt.datum.Series == "Candidate")
+        .mark_line(color="#7447e8", fill="#7447e8", fillOpacity=0.08, strokeOpacity=0)
+        .encode(**position, detail="Name:N", order="Plot order:Q")
+    )
+    polygons = (
+        alt.Chart(pd.DataFrame(closed))
+        .mark_line(point=False, strokeWidth=2.5)
+        .encode(
+            **position,
+            color=alt.Color(
+                "Name:N",
+                title=None,
+                scale=alt.Scale(
+                    domain=[candidate_label, baseline_label],
+                    range=["#7447e8", "#f0b91b"],
+                ),
+                legend=alt.Legend(orient="top", direction="horizontal"),
+            ),
+            strokeDash=alt.StrokeDash(
+                "Series:N",
+                scale=alt.Scale(domain=["Candidate", "Baseline"], range=[[1, 0], [6, 4]]),
+                legend=None,
+            ),
+            detail="Name:N",
+            order="Plot order:Q",
+            tooltip=[
+                "Name:N",
+                "Topic:N",
+                alt.Tooltip("Success rate:Q", format=".1%"),
+                alt.Tooltip("Correct:Q", format=",d"),
+                alt.Tooltip("Scored:Q", format=",d"),
+                alt.Tooltip("Questions:Q", format=",d"),
+            ],
+        )
+    )
+    return (grid + spokes + candidate_fill + polygons + label_layer + ring_label_layer).properties(
+        width=640,
+        height=640,
+    )
+
+
 def _render_pairwise_comparison(
     labels_to_records: dict[str, list[dict[str, Any]]],
     *,
@@ -2032,12 +2207,18 @@ def render_capability_map_page() -> None:
     regressed = movement_counts["Regressed"]
     unsolved = movement_counts["Unsolved"]
     net = gained - regressed
-    headline = st.columns(5)
+    mcnemar_p = exact_mcnemar_p_value(gained, regressed)
+    headline = st.columns(6)
     headline[0].metric("Shared questions", f"{len(rows):,}")
     headline[1].metric("Retained", f"{retained:,}")
     headline[2].metric("Gained", f"{gained:,}", delta=f"+{gained}")
     headline[3].metric("Regressed", f"{regressed:,}", delta=f"-{regressed}", delta_color="inverse")
     headline[4].metric("Net capability", f"{net:+,}")
+    headline[5].metric("Exact McNemar p-value", f"{mcnemar_p:.4g}")
+    st.caption(
+        "Two-sided exact McNemar test on shared questions; gains and regressions are the "
+        "discordant pairs."
+    )
 
     if gained and not regressed:
         st.success(f"Strict upgrade on the shared set: {gained} newly solved and no regressions.")
@@ -2055,6 +2236,61 @@ def render_capability_map_page() -> None:
         st.error(f"Net regression: {gained} gained and {regressed} regressed ({net:+} net).")
     else:
         st.info("No correctness changed on the shared question set.")
+
+    st.subheader("Accuracy by physics category")
+    st.caption(
+        "Judged accuracy by GPT-5.6 Sol primary topic. Categories with no tagged questions in "
+        "either run are omitted; categories with tagged questions remain even when both runs "
+        "score 0%."
+    )
+    if not TOPIC_CLASSIFICATIONS_PATH.is_file():
+        st.info(
+            "Topic classifications were not found at "
+            f"`{TOPIC_CLASSIFICATIONS_PATH.relative_to(ROOT)}`."
+        )
+    else:
+        try:
+            primary_topics = load_topic_classifications(
+                str(TOPIC_CLASSIFICATIONS_PATH),
+                TOPIC_CLASSIFICATIONS_PATH.stat().st_mtime_ns,
+            )
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            st.warning(f"Could not load topic classifications: {exc}")
+        else:
+            topic_rows = [
+                *(
+                    {**row, "Name": baseline_label}
+                    for row in topic_success_rows(
+                        entries[baseline_label]["records"], primary_topics
+                    )
+                ),
+                *(
+                    {**row, "Name": candidate_label}
+                    for row in topic_success_rows(
+                        entries[candidate_label]["records"], primary_topics
+                    )
+                ),
+            ]
+            visible_topics = {
+                row["Topic"] for row in topic_rows if int(row["Questions"]) > 0
+            }
+            if len(visible_topics) < 3:
+                st.info("At least three tagged physics categories are required for a radar chart.")
+            else:
+                with st.container(key="capability-radar"):
+                    st.altair_chart(
+                        _topic_radar_chart(
+                            topic_rows,
+                            baseline_label=baseline_label,
+                            candidate_label=candidate_label,
+                        ),
+                        width=640,
+                        height=640,
+                    )
+                st.caption(
+                    "Failed and unjudged questions appear in tooltips but are excluded from "
+                    "accuracy."
+                )
 
     selected_key = str(st.session_state.get("capability-selected-key") or rows[0]["key"])
     selected_row = next((row for row in rows if row["key"] == selected_key), rows[0])

@@ -1,12 +1,11 @@
-import json
 from pathlib import Path
-from string import Template
 
 from .models.registry import ModelRegistry
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_EXAMPLES_DIR = PROJECT_ROOT / "examples"
+DEFAULT_PROMPT_PATH = PROJECT_ROOT / "conductor-prompt-refined.md"
+QUESTION_MARKER = "<USER QUESTION>"
 TASK_TYPES = [
     "physics",
     "chemistry",
@@ -23,14 +22,14 @@ TASK_TYPES = [
 ]
 
 
-def build_conductor_json_schema(model_registry: ModelRegistry | None = None) -> dict:
+def build_conductor_json_schema(model_registry: ModelRegistry | None = None, *, model_ids: list[str] | None = None) -> dict:
     """Return the JSON Schema used to constrain conductor decoding.
 
     Keeping this schema separate from ``Task`` is intentional: the original
     question is supplied by the caller and must not be echoed by the planner.
     """
 
-    model_ids = model_registry.model_ids() if model_registry is not None else []
+    model_ids = model_registry.model_ids() if model_registry is not None else (model_ids or [])
     if model_registry is not None and not model_ids:
         raise ValueError("Cannot build a conductor workflow without configured models")
     if any(not isinstance(model_id, str) for model_id in model_ids):
@@ -82,94 +81,70 @@ def build_conductor_response_format(model_registry: ModelRegistry) -> dict:
     }
 
 
-def build_prompt(model_list: list[str], tool_list: list[str], example_list: list[str], query: str) -> str:
-    prompt_path = PROJECT_ROOT / "conductor-prompt.txt"
-    with prompt_path.open() as f:
-        prompt_template = f.read()
+def load_prompt_template(path: Path) -> tuple[str, list[str]]:
+    import re
 
-    template = Template(prompt_template)
-
-    return template.substitute(
-        models="\n".join(model_list),
-        tools="\n".join(tool_list),
-        examples="\n".join(example_list),
-        query=query,
-    )
+    template = path.read_text(encoding="utf-8")
+    if template.count(QUESTION_MARKER) != 1:
+        raise ValueError(f"{path} must contain exactly one {QUESTION_MARKER!r} marker")
+    ids = list(dict.fromkeys(re.findall(r'^- model_id="([^"]+)"', template, re.MULTILINE)))
+    if not ids:
+        raise ValueError(f"Could not find worker model_id entries in {path}")
+    return template, ids
 
 
-def build_worker_model_lines(model_registry: ModelRegistry) -> list[str]:
-    lines: list[str] = []
-
-    for model_id, spec in model_registry._models.items():
-        if not isinstance(model_id, str):
-            raise ValueError("Conductor worker model IDs must be strings")
-        details = []
-        if spec.display_name:
-            details.append(f"name={spec.display_name}")
-        if spec.provider:
-            details.append(f"provider={spec.provider}")
-        if spec.tags:
-            details.append(f"tags={','.join(sorted(spec.tags))}")
-        if spec.supports_json:
-            details.append("supports_json=true")
-        if spec.supports_tools:
-            details.append("supports_tools=true")
-
-        suffix = f" ({'; '.join(details)})" if details else ""
-        model_lines = [f"- model_id={json.dumps(model_id)}{suffix}"]
-        for label in ("role", "best_for", "useful_for", "routing_note"):
-            value = getattr(spec, label)
-            if value:
-                model_lines.append(f"  - {label}: {value}")
-        lines.append("\n".join(model_lines))
-
-    return lines
+def workflow_response_format(model_ids: list[str]) -> dict:
+    return {"type": "json_schema", "json_schema": {
+        "name": "conductor_workflow", "strict": True,
+        "schema": build_conductor_json_schema(model_ids=model_ids),
+    }}
 
 
-def build_default_examples(
-    model_registry: ModelRegistry,
-    *,
-    examples_dir: str | Path = DEFAULT_EXAMPLES_DIR,
-) -> list[str]:
-    """Load every JSON workflow example in stable filename order."""
-
-    # Retain the registry argument for the public API used by training and
-    # inference. Examples are authored independently of a particular worker
-    # pool, while the available IDs are described separately in the prompt.
-    del model_registry
-
-    directory = Path(examples_dir)
-    paths = sorted(directory.glob("*.json"))
-    if not paths:
-        raise ValueError(f"No JSON conductor examples found in {directory}")
-
-    examples: list[str] = []
-    for path in paths:
-        try:
-            with path.open(encoding="utf-8") as example_file:
-                example = json.load(example_file)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Invalid JSON conductor example {path}: {exc}") from exc
-
-        if not isinstance(example, dict):
-            raise ValueError(f"Conductor example {path} must contain a JSON object")
-        title = path.stem.replace("_", " ").title()
-        rendered_example = json.dumps(example, indent=2)
-        examples.append(f"### {title}\n\n```json\n{rendered_example}\n```")
-
-    return examples
+def validate_plan(plan: object, model_ids: set[str]) -> dict:
+    """Validate generated compact plans before marking generation successful."""
+    if not isinstance(plan, dict):
+        raise ValueError("completion is not a JSON object")
+    if plan.get("task_type") not in TASK_TYPES:
+        raise ValueError("task_type is missing or invalid")
+    if plan.get("difficulty") not in {"easy", "medium", "hard"}:
+        raise ValueError("difficulty is missing or invalid")
+    workflow = plan.get("workflow")
+    if not isinstance(workflow, list) or not 1 <= len(workflow) <= 7:
+        raise ValueError("workflow must contain between 1 and 7 steps")
+    seen = {"question"}
+    for index, step in enumerate(workflow):
+        if not isinstance(step, dict):
+            raise ValueError(f"workflow step {index} is not an object")
+        step_id = step.get("step_id")
+        if not isinstance(step_id, str) or not step_id.strip() or step_id in seen:
+            raise ValueError(f"workflow step {index} has an empty, reserved, or duplicate step_id")
+        if step.get("model_id") not in model_ids:
+            raise ValueError(f"workflow step {step_id!r} has an unavailable model_id")
+        if not isinstance(step.get("instruction"), str) or not step["instruction"].strip():
+            raise ValueError(f"workflow step {step_id!r} instruction must be non-empty")
+        access = step.get("access_list")
+        if not isinstance(access, list) or any(not isinstance(key, str) or key not in seen for key in access):
+            raise ValueError(f"workflow step {step_id!r} has a forward or unknown dependency")
+        seen.add(step_id)
+    return plan
 
 
-def build_conductor_prompt(
-    question: str,
-    model_registry: ModelRegistry,
-    *,
-    tools: list[str] | None = None,
-    examples: list[str] | None = None,
-) -> str:
-    return build_prompt(
-        build_worker_model_lines(model_registry),
-        tools or ["No external tools or code-execution environments are available to any worker."],
-        examples or build_default_examples(model_registry),
-        question,
-    )
+def load_conductor_prompt() -> str:
+    """Read the complete, authoritative conductor prompt."""
+    template = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
+    if template.count(QUESTION_MARKER) != 1:
+        raise ValueError(
+            f"{DEFAULT_PROMPT_PATH} must contain exactly one {QUESTION_MARKER!r} marker"
+        )
+    return template
+
+
+def build_prompt(question: str, *, prompt_template: str | None = None) -> str:
+    template = load_conductor_prompt() if prompt_template is None else prompt_template
+    return template.replace(QUESTION_MARKER, question)
+
+
+def build_conductor_prompt(question: str, model_registry: ModelRegistry) -> str:
+    # The registry constrains decoding and execution; prompt content lives in
+    # the prompt file, including its worker catalogue and embedded examples.
+    return build_prompt(question)

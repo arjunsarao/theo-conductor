@@ -1,0 +1,1170 @@
+{
+  "dataset": {
+    "path": "outputs/hle-diamond-physics/questions.jsonl",
+    "sha256": "6a1d5684c0da76ef0ba387ca44fc3d65ce3a94ceb4ed5ff431928d0b79dee4c9",
+    "questions": 61,
+    "unique_ids": 61,
+    "multimodal": 21,
+    "missing_images": 0,
+    "partitions": {
+      "reasoning": 47,
+      "knowledge": 14
+    }
+  },
+  "runs": [
+    {
+      "path": "outputs/hle-diamond-astra-gemini-batch-22621/results.jsonl",
+      "sha256": "e9b80ac00ab20e5c999a8f81973648c1e30a7775b6594337362f01435bf60e65",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 42,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 1,
+      "empty_responses": 1,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 60,
+        "error": 1
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 23256,
+      "error_types": {
+        "Empty or failed model response (finish_reason='error')": 1
+      }
+    },
+    {
+      "path": "outputs/hle-diamond-astra-repeats-22646/run-2/results.jsonl",
+      "sha256": "018882fc3a031d50ddd0a33a5fdb6f822c8692f0d2891227dc32b230696817d9",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 42,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 2,
+      "empty_responses": 2,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 59,
+        "None": 2
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 20963,
+      "error_types": {
+        "RateLimitError": 2
+      }
+    },
+    {
+      "path": "outputs/hle-diamond-astra-repeats-22646/run-3/results.jsonl",
+      "sha256": "9c44ae901fe9d22427ee13a6395887ab965b795c058bd7dddddb6caa24a09476",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 44,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 21470,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-astra-repeats-22646/run-4/results.jsonl",
+      "sha256": "e858f4ddd78c3c2b95035c43bd017380b2b37a53782c5c7d206d2f3ca0795b37",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 41,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 18448,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-claude-fable-51-direct-mean4/run-1/results.jsonl",
+      "sha256": "64a4d841f4949295e585dcfad89702734ef0a03b66d5b789e4df369ef4c6d8ed",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 0,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 61,
+      "empty_responses": 61,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "None": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 0,
+      "error_types": {
+        "APIStatusError": 61
+      }
+    },
+    {
+      "path": "outputs/hle-diamond-claude-fable-51-direct-mean4/run-2/results.jsonl",
+      "sha256": "64a4d841f4949295e585dcfad89702734ef0a03b66d5b789e4df369ef4c6d8ed",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 0,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 61,
+      "empty_responses": 61,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "None": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 0,
+      "error_types": {
+        "APIStatusError": 61
+      }
+    },
+    {
+      "path": "outputs/hle-diamond-claude-fable-51-direct-mean4/run-3/results.jsonl",
+      "sha256": "64a4d841f4949295e585dcfad89702734ef0a03b66d5b789e4df369ef4c6d8ed",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 0,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 61,
+      "empty_responses": 61,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "None": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 0,
+      "error_types": {
+        "APIStatusError": 61
+      }
+    },
+    {
+      "path": "outputs/hle-diamond-claude-fable-51-direct-mean4/run-4/results.jsonl",
+      "sha256": "64a4d841f4949295e585dcfad89702734ef0a03b66d5b789e4df369ef4c6d8ed",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 0,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 61,
+      "empty_responses": 61,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "None": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 0,
+      "error_types": {
+        "APIStatusError": 61
+      }
+    },
+    {
+      "path": "outputs/hle-diamond-fable51-anthropic-batch-mean4/run-1/results.jsonl",
+      "sha256": "6d941975977a8a67d8a2efcd5944d47fb9742597a7bbc58dd512ccb3f087cabd",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 33,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "end_turn": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 80060,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-fable51-anthropic-batch-mean4/run-2/results.jsonl",
+      "sha256": "07e06b9e453310fe272d8f285eeea10271bc01cab7389cffa41937c9f5faf07d",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 33,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "end_turn": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 74055,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-fable51-anthropic-batch-mean4/run-3/results.jsonl",
+      "sha256": "23c39673d7aff15d26dbefdf227eb39ca6bb93034ada0e643ae6d3b22065921d",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 36,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "end_turn": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 126107,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-fable51-anthropic-batch-mean4/run-4/results.jsonl",
+      "sha256": "d5d63cf3b0d09b2f09a8ecd11e231b8fcefd0080f9c642e82cf0570c5b13ee32",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 40,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "end_turn": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 84111,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-fugu-max-mean4-22753/run-1/results.jsonl",
+      "sha256": "90c6c4daa11c68fd7193de8c08d6f1a4f362d1543264df8388414a829f84224c",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 15,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 57,
+        "length": 4
+      },
+      "direct_caps": 4,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 4,
+      "max_completion_tokens": 95119,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-fugu-max-mean4-22753/run-2/results.jsonl",
+      "sha256": "470d90f90d45b0dac38757b2284d0a6e7515b0746f4e646be069c4d992dc0cfd",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 15,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 57,
+        "length": 4
+      },
+      "direct_caps": 4,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 4,
+      "max_completion_tokens": 91923,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-fugu-max-mean4-22753/run-3/results.jsonl",
+      "sha256": "b6be565d7fef91ab34d3ac8f429a3e5e9c5ce88b1ccc7240d38f012376f7b557",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 13,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 1,
+      "max_completion_tokens": 88971,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-fugu-max-mean4-22753/run-4/results.jsonl",
+      "sha256": "a1a9b6092f350ef7dea9aebadb7d0b481c25c3c0cdfa35646bed6e9dd75c0b1a",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 16,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 60,
+        "length": 1
+      },
+      "direct_caps": 1,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 1,
+      "max_completion_tokens": 82992,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-fugu-ultra-v2-mean4/run-1/results.jsonl",
+      "sha256": "587f04dd34f7f81b52b1352abd9580ddfd608e58ac250a959cc956c40d855166",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 31,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 1,
+      "max_completion_tokens": 394977,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-fugu-ultra-v2-mean4/run-2/results.jsonl",
+      "sha256": "054e13b43fcb9c58a83dda6ef61f1cba8f8e531d14258bbf779140821eab25aa",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 31,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 376093,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-fugu-ultra-v2-mean4/run-3/results.jsonl",
+      "sha256": "8fe4bd4d4324d468e3d7ad87bc824701c601ea385a28e1a875f617586dd67ea5",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 34,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 2,
+      "max_completion_tokens": 249225,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-fugu-ultra-v2-mean4/run-4/results.jsonl",
+      "sha256": "a17a7bc9ee57af97494d4e3d04bc40cb9cd6c61c200afdac6ec336cfa413bf54",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 25,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 60,
+        "length": 1
+      },
+      "direct_caps": 1,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 1,
+      "max_completion_tokens": 166179,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-gpt61-frontier-mean4-22782/run-1/results.jsonl",
+      "sha256": "dafa2e983878e842c8649e071e312bd1e292510efd8287e71b9f8eb633847755",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 34,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 2,
+      "empty_responses": 2,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "None": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 141,
+      "worker_caps": 7,
+      "worker_cap_models": {
+        "gemini-3.7-flash": 1,
+        "deepseek-v4-pro": 6
+      },
+      "worker_cap_affected_workflows": 7,
+      "worker_errors": 0,
+      "empty_workers": 6,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 103293,
+      "error_types": {
+        "NotFoundError": 2
+      },
+      "plans": {
+        "count": 61,
+        "errors": 0,
+        "finish_reasons": {
+          "stop": 61
+        },
+        "prompt_hashes": [
+          "432bfab01278483d1355c9e7ba271a75294c5b1055b3e8456002cc29eb0ea099"
+        ],
+        "request_parameters": {
+          "temperature": 0.1,
+          "max_tokens": 8192,
+          "seed": 42,
+          "response_format_sha256": "af25dbfbad376f583f17f81b8b1e24f195186348a8ff8b7e329e4f9c3e826b67"
+        },
+        "image_mismatches": []
+      },
+      "execution_config_hashes": [
+        "94c59d6b99466abb55d39487b726ee93eb7ae2b1fdfdc9a3120cf66626a9efa4"
+      ]
+    },
+    {
+      "path": "outputs/hle-diamond-gpt61-frontier-mean4-22782/run-2/results.jsonl",
+      "sha256": "16ba4c34689ff507d9559d55c65f6327de69911d490b2be626d9d8db21acadb4",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 38,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 3,
+      "empty_responses": 3,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "None": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 138,
+      "worker_caps": 3,
+      "worker_cap_models": {
+        "deepseek-v4-pro": 3
+      },
+      "worker_cap_affected_workflows": 3,
+      "worker_errors": 1,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 82827,
+      "error_types": {
+        "NotFoundError": 3
+      },
+      "plans": {
+        "count": 61,
+        "errors": 0,
+        "finish_reasons": {
+          "stop": 61
+        },
+        "prompt_hashes": [
+          "432bfab01278483d1355c9e7ba271a75294c5b1055b3e8456002cc29eb0ea099"
+        ],
+        "request_parameters": {
+          "temperature": 0.1,
+          "max_tokens": 8192,
+          "seed": 43,
+          "response_format_sha256": "af25dbfbad376f583f17f81b8b1e24f195186348a8ff8b7e329e4f9c3e826b67"
+        },
+        "image_mismatches": []
+      },
+      "execution_config_hashes": [
+        "94c59d6b99466abb55d39487b726ee93eb7ae2b1fdfdc9a3120cf66626a9efa4"
+      ]
+    },
+    {
+      "path": "outputs/hle-diamond-gpt61-frontier-mean4-22782/run-3/results.jsonl",
+      "sha256": "134d57d47d8af8e221a4d1a8ced5699e4111f1998bb763c96c4b4785b54d73ed",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 34,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 1,
+      "empty_responses": 2,
+      "empty_responses_without_error": 1,
+      "finish_reasons": {
+        "None": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 143,
+      "worker_caps": 5,
+      "worker_cap_models": {
+        "claude-fable-5.1": 1,
+        "deepseek-v4-pro": 4
+      },
+      "worker_cap_affected_workflows": 5,
+      "worker_errors": 0,
+      "empty_workers": 4,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 111478,
+      "error_types": {
+        "NotFoundError": 1
+      },
+      "plans": {
+        "count": 61,
+        "errors": 0,
+        "finish_reasons": {
+          "stop": 61
+        },
+        "prompt_hashes": [
+          "432bfab01278483d1355c9e7ba271a75294c5b1055b3e8456002cc29eb0ea099"
+        ],
+        "request_parameters": {
+          "temperature": 0.1,
+          "max_tokens": 8192,
+          "seed": 44,
+          "response_format_sha256": "af25dbfbad376f583f17f81b8b1e24f195186348a8ff8b7e329e4f9c3e826b67"
+        },
+        "image_mismatches": []
+      },
+      "execution_config_hashes": [
+        "94c59d6b99466abb55d39487b726ee93eb7ae2b1fdfdc9a3120cf66626a9efa4"
+      ]
+    },
+    {
+      "path": "outputs/hle-diamond-gpt61-frontier-mean4-22782/run-4/results.jsonl",
+      "sha256": "d9a1d0a309b65cc785c5917947f4abde0bcf460e2ce4cc6c94ced2d45e2b8f9b",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 30,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 1,
+      "empty_responses_without_error": 1,
+      "finish_reasons": {
+        "None": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 147,
+      "worker_caps": 8,
+      "worker_cap_models": {
+        "deepseek-v4-pro": 7,
+        "claude-fable-5.1": 1
+      },
+      "worker_cap_affected_workflows": 8,
+      "worker_errors": 1,
+      "empty_workers": 9,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 122545,
+      "error_types": {},
+      "plans": {
+        "count": 61,
+        "errors": 0,
+        "finish_reasons": {
+          "stop": 61
+        },
+        "prompt_hashes": [
+          "432bfab01278483d1355c9e7ba271a75294c5b1055b3e8456002cc29eb0ea099"
+        ],
+        "request_parameters": {
+          "temperature": 0.1,
+          "max_tokens": 8192,
+          "seed": 45,
+          "response_format_sha256": "af25dbfbad376f583f17f81b8b1e24f195186348a8ff8b7e329e4f9c3e826b67"
+        },
+        "image_mismatches": []
+      },
+      "execution_config_hashes": [
+        "94c59d6b99466abb55d39487b726ee93eb7ae2b1fdfdc9a3120cf66626a9efa4"
+      ]
+    },
+    {
+      "path": "outputs/hle-diamond-gpt61-sol-direct-mean4/run-1/results.jsonl",
+      "sha256": "62dc2c59a469f517b272c5e1a4ed14375f488adaf62cb1de336727592d07d873",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 35,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 15002,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-gpt61-sol-direct-mean4/run-2/results.jsonl",
+      "sha256": "99630128e5dd014b2b47918a3f605e3d543f908e10a0732809fcb5306f1bbfac",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 35,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 9969,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-gpt61-sol-direct-mean4/run-3/results.jsonl",
+      "sha256": "414641d1ae48733593f045c7298d3c4f63ec9d31027edff4d09369e6e022ac44",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 40,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 11509,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-gpt61-sol-direct-mean4/run-4/results.jsonl",
+      "sha256": "b52dcb4971814d02337ed3be9a23c9bec89b8395986f8f89c93261f991d8d18c",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 36,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 12658,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-jev-router-mean4-22735/run-1/results.jsonl",
+      "sha256": "6d14b459c33fece09efed83fcdec786eb703f804fe2ac8347dc2b4660347c4ac",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 27,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 19111,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-jev-router-mean4-22735/run-2/results.jsonl",
+      "sha256": "a506f8b7d538b46d5412d6d02c35cb3ff44e441da8bf0495f5fa3aac626cc9b9",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 25,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 29652,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-jev-router-mean4-22735/run-3/results.jsonl",
+      "sha256": "c536cdd2bc706ed917d5af4e5843aab500981afc7af784ad5811d58a784d511e",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 30,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 36438,
+      "error_types": {}
+    },
+    {
+      "path": "outputs/hle-diamond-jev-router-mean4-22735/run-4/results.jsonl",
+      "sha256": "c3f10c902e6acf5f4713b351b724f9a5cff66940a77d542f34ab03d38af2308d",
+      "records": 61,
+      "unique_ids": 61,
+      "same_ids_as_dataset": true,
+      "input_mismatches": [],
+      "correct": 28,
+      "boolean_verdicts": 61,
+      "judge_errors": 0,
+      "judge_models": {
+        "google/gemini-3.8-flash": 61
+      },
+      "generation_errors": 0,
+      "empty_responses": 0,
+      "empty_responses_without_error": 0,
+      "finish_reasons": {
+        "stop": 61
+      },
+      "direct_caps": 0,
+      "worker_outputs": 0,
+      "worker_caps": 0,
+      "worker_cap_models": {},
+      "worker_cap_affected_workflows": 0,
+      "worker_errors": 0,
+      "empty_workers": 0,
+      "missing_final_marker_in_nonempty_response": 0,
+      "max_completion_tokens": 17061,
+      "error_types": {}
+    }
+  ],
+  "aggregates": [
+    {
+      "path": "outputs/hle-diamond-astra-repeats-22646/aggregate-summary.json",
+      "attempts": 244,
+      "correct": 169,
+      "passed_questions": 48,
+      "generation_errors": 3,
+      "recomputed_mean": 0.6926229508196722,
+      "recomputed_pass": 0.7868852459016393,
+      "matches_saved": true,
+      "identical_nonempty_response_questions_across_all_repeats": 0
+    },
+    {
+      "path": "outputs/hle-diamond-fable51-anthropic-batch-mean4/aggregate-summary.json",
+      "attempts": 244,
+      "correct": 142,
+      "passed_questions": 45,
+      "generation_errors": 0,
+      "recomputed_mean": 0.5819672131147541,
+      "recomputed_pass": 0.7377049180327869,
+      "matches_saved": true,
+      "identical_nonempty_response_questions_across_all_repeats": 0
+    },
+    {
+      "path": "outputs/hle-diamond-fugu-max-mean4-22753/aggregate-summary.json",
+      "attempts": 244,
+      "correct": 59,
+      "passed_questions": 24,
+      "generation_errors": 0,
+      "recomputed_mean": 0.24180327868852458,
+      "recomputed_pass": 0.39344262295081966,
+      "matches_saved": true,
+      "identical_nonempty_response_questions_across_all_repeats": 0
+    },
+    {
+      "path": "outputs/hle-diamond-fugu-ultra-v2-mean4/aggregate-summary.json",
+      "attempts": 244,
+      "correct": 121,
+      "passed_questions": 39,
+      "generation_errors": 0,
+      "recomputed_mean": 0.4959016393442623,
+      "recomputed_pass": 0.639344262295082,
+      "matches_saved": true,
+      "identical_nonempty_response_questions_across_all_repeats": 0
+    },
+    {
+      "path": "outputs/hle-diamond-gpt61-frontier-mean4-22782/aggregate-summary.json",
+      "attempts": 244,
+      "correct": 136,
+      "passed_questions": 48,
+      "generation_errors": 6,
+      "recomputed_mean": 0.5573770491803278,
+      "recomputed_pass": 0.7868852459016393,
+      "matches_saved": true,
+      "identical_nonempty_response_questions_across_all_repeats": 0
+    },
+    {
+      "path": "outputs/hle-diamond-gpt61-sol-direct-mean4/aggregate-summary.json",
+      "attempts": 244,
+      "correct": 146,
+      "passed_questions": 44,
+      "generation_errors": 0,
+      "recomputed_mean": 0.5983606557377049,
+      "recomputed_pass": 0.7213114754098361,
+      "matches_saved": true,
+      "identical_nonempty_response_questions_across_all_repeats": 0
+    },
+    {
+      "path": "outputs/hle-diamond-jev-router-mean4-22735/aggregate-summary.json",
+      "attempts": 244,
+      "correct": 110,
+      "passed_questions": 40,
+      "generation_errors": 0,
+      "recomputed_mean": 0.45081967213114754,
+      "recomputed_pass": 0.6557377049180327,
+      "matches_saved": true,
+      "identical_nonempty_response_questions_across_all_repeats": 0
+    }
+  ]
+}

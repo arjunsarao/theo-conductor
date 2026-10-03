@@ -1,0 +1,62 @@
+You are classifying challenging physics questions by the physics subfields most relevant to solving them.
+
+For each question, select and rank the **three most relevant subfield tags** from the taxonomy below.
+
+## Taxonomy
+
+1. **Condensed Matter Physics**
+2. **Quantum Information, Science & Technology**
+3. **Atomic, Molecular & Optical Physics**
+4. **High Energy & Particle Physics**
+5. **Mathematical Physics**
+6. **Gravitation, Cosmology & Astrophysics**
+7. **Statistical Physics & Thermodynamics**
+8. **Nuclear Physics**
+9. **Nonlinear Dynamics & Classical Mechanics**
+10. **Fluid & Plasma Dynamics**
+11. **Biophysics**
+12. **Electromagnetism**
+13. **Optics & Photonics**
+14. **Experimental & Applied Physics**
+
+## Classification instructions
+
+Classify the question according to the **knowledge and reasoning required to solve it**, not merely terminology appearing in the question.
+
+Return exactly three tags, ranked from most to least relevant:
+
+- `tag_1`: The primary subfield. This should represent the field that best characterizes the core problem.
+- `tag_2`: The most important secondary subfield.
+- `tag_3`: A tertiary subfield that is genuinely relevant to solving or understanding the problem.
+
+Use only tags from the taxonomy above. Do not invent new tags.
+
+The three tags must be distinct.
+
+Prefer the **specific physical subfield** over Mathematical Physics when both apply. Use **Mathematical Physics** when specialized mathematical physics concepts or methods are themselves central to solving the problem, rather than simply because the solution involves mathematics.
+
+Likewise, do not use **Experimental & Applied Physics** merely because a question mentions an experiment, instrument, or real-world system. Use it when experimental methodology, instrumentation, measurement, engineering, or applied physical reasoning is substantively required.
+
+For interdisciplinary questions, rank the fields according to their importance to the actual solution. A field that provides the central physical framework should generally rank above a field that provides context or a supporting technique.
+
+The reference answer is provided to help identify the concepts and expertise actually required to solve the problem. **Do not classify based simply on words or topics appearing in the reference answer.** Treat it as additional evidence about the reasoning required.
+
+Even when only one or two subfields are strongly relevant, you must still select the three best-fitting tags. In such cases, rank the weaker association third rather than inventing a category.
+
+## Question
+
+$question
+
+## Reference answer
+
+$reference_answer
+
+## Output
+
+Return only the following JSON object:
+
+{
+  "tag_1": "<taxonomy tag>",
+  "tag_2": "<taxonomy tag>",
+  "tag_3": "<taxonomy tag>"
+}

@@ -2,6 +2,132 @@
 
 Uses Sakana Fugu for model routing.
 
+## Resumable evaluation
+
+`theo-evaluate` is the shared entry point for new evaluation runs. The module
+form below also works before refreshing the installed console entry points.
+It uses standard completion requests, including for clients configured with
+native batch support; the existing provider batch launchers remain available.
+All model arguments are **registry IDs** (`model_idx` in the YAML), rather than
+provider model slugs. Use a configuration containing the models needed for
+each stage. Plan generation checks that the prompt's worker catalogue exists
+in that configuration.
+
+Input is JSONL with one question per line:
+
+```json
+{"id":"question-1","question":"What is 2 + 2?","answer":"4","subject":"Math"}
+```
+
+Optional fields include `reference_answer`, `answer_type`, and `image` (a URL
+or embedded image data URI). Input IDs must be unique. Each independent sample
+gets its own `sample_index`; `--attempts` controls recovery attempts within that
+sample and never increases k.
+
+```bash
+# Generate plans only, with four independent samples per question.
+.venv/bin/python -m theo_conductor.evaluate plans \
+  --input questions.jsonl --config configs/worker_pool_frontier.yaml \
+  --planner-model gpt-6.1-sol --samples 4 --output-dir outputs/plans-run
+
+# Execute those stored plans without making new plans.
+.venv/bin/python -m theo_conductor.evaluate workflows \
+  --plans outputs/plans-run --config configs/worker_pool_frontier.yaml \
+  --judge-model gemini-3.7-flash --output-dir outputs/workflows-run
+
+# Generate plans and execute workflows in one resumable run.
+.venv/bin/python -m theo_conductor.evaluate workflows \
+  --input questions.jsonl --config configs/worker_pool_frontier.yaml \
+  --planner-model gpt-6.1-sol --samples 4 \
+  --judge-model gemini-3.7-flash --output-dir outputs/full-run
+
+# Benchmark exactly one model; omit --judge-model to defer judging.
+.venv/bin/python -m theo_conductor.evaluate model \
+  --input questions.jsonl --config configs/worker_pool_frontier.yaml \
+  --model gpt-6.1-sol --samples 4 --output-dir outputs/direct-run
+
+# Judge existing completions in a managed run; generation is never invoked.
+.venv/bin/python -m theo_conductor.evaluate judge \
+  --output-dir outputs/direct-run --config configs/worker_pool_frontier.yaml \
+  --judge-model gemini-3.7-flash
+
+# Import and judge a legacy, single-model results file in a new directory.
+.venv/bin/python -m theo_conductor.evaluate judge \
+  --results outputs/old-run/results.jsonl --output-dir outputs/rejudged-run \
+  --config configs/worker_pool_frontier.yaml --judge-model gemini-3.7-flash
+
+# Catalogue managed runs and existing legacy summaries.
+.venv/bin/python -m theo_conductor.evaluate catalog --root outputs
+
+# Aggregate independent runs with the same inputs, model and generation settings.
+.venv/bin/python -m theo_conductor.evaluate aggregate \
+  --runs outputs/direct-run outputs/direct-run-2 --output reports/aggregate.json
+```
+
+To resume, repeat the same command with the same output directory. Failed and
+interrupted items retry automatically. Completed plans, solver responses, and
+judge verdicts are reused when their request fingerprints still match. Worker
+steps checkpoint separately: a failed layer retains its successful siblings,
+and retrying a failed or capped step does not rerun its successful ancestors.
+Steps ending with `length`/`max_tokens`, empty responses, provider errors, and
+content filtering are treated as incomplete; their dependents wait until the
+step succeeds. Raise `--max-tokens` to recover a persistent cap, or change the
+model's output limit in the configuration. Changed requests invalidate affected
+steps and their descendants. Plans reuse only when the planner, prompt, inputs,
+and generation parameters match.
+
+You can increase `--samples` in an existing question-input run to add independent
+samples without repeating completed samples. Execution from `--plans` preserves
+the samples already present in the source file. Use a new output directory for
+a different input, mode, solver, or planner. `--force` replaces judge verdicts;
+it does not force generation. Concurrent writers to the same run are rejected.
+
+Each managed run contains:
+
+- `manifest.json`: input/model identity, sample count, and configuration revision hashes.
+- `checkpoints/*.json`: durable per-question/sample state, worker outputs, and attempt history.
+- `results.jsonl`: sorted snapshot of all samples, including pending and failed samples.
+- `plans.jsonl`: generated/imported plans, usable by the workflow command.
+- `summary.json`: shared statistics and repeated-sampling metrics.
+- `failures.jsonl`: current generation/judge failures, failed steps, and capped step IDs.
+
+The summary reports planned and executed model distributions; planner, worker,
+solver, tool, and judge token/cost/latency statistics; historical failure reasons;
+and current generation/judge failure counts. Costs distinguish provider-reported
+charges from configured list-price estimates. Every metric includes known and
+unknown observation counts; missing usage is not treated as zero. Attempt totals
+include recovery attempts, and each worker tool round checkpoints its usage.
+Stored-plan and imported-completion statistics are reported separately from
+requests issued by the current run, with an additional observed end-to-end total.
+Legacy imports retain their completions and metadata; historical request costs
+cannot be reconstructed when they were not recorded.
+
+For n independent samples per question, `mean_at_k` is the mean correctness of
+samples (equivalently the expected mean of a random k-subset). `pass_at_k` uses
+`1 - C(n-c, k) / C(n, k)`, where c is the number of correct samples. The summary
+reports every k from 1 through n; at k=n, pass@k is the fraction of questions with
+at least one correct sample. Recovery retries do not count as samples. Metrics
+remain null until every question has all expected outcomes. Exhausted solver or
+workflow failures count as unsuccessful samples; missing plans and judge errors
+remain unknown. Plan-only runs have no correctness metrics.
+
+Snapshots use fsync plus atomic replacement and are refreshed on a graceful
+interrupt. After a hard kill, per-item checkpoints remain authoritative and the
+next invocation rebuilds exported snapshots. A completion request interrupted
+before its response is saved may be sent again; these APIs cannot guarantee
+exactly-once billing. An interrupted tool step restarts that step, so tools with
+external side effects need their own idempotency support. Existing provider
+batch launchers retain their separate batch lifecycle behavior.
+
+For SLURM, create `slurm_logs` before submission and pass the same CLI arguments:
+
+```bash
+mkdir -p slurm_logs
+sbatch scripts/evaluate.sbatch workflows \
+  --input questions.jsonl --config configs/worker_pool_frontier.yaml \
+  --planner-model gpt-6.1-sol --samples 4 --output-dir outputs/full-run
+```
+
 ## Training traces
 
 GRPO training reports normal trainer metrics to Weights & Biases by default
@@ -106,8 +232,12 @@ without starting or calling worker-model servers:
 sbatch scripts/format_only_grpo.sbatch
 ```
 
-This job requests two GPUs for conductor training. The worker registry is still
-used to build the prompt and validate generated `model_id` values. To execute
+This job requests two GPUs for conductor training. The complete conductor
+prompt, including model guidance and examples, lives in
+`conductor-prompt-refined.md`. Training, planning, and generation scripts use
+this file and substitute only `<USER QUESTION>`. Keep its worker catalogue in
+sync with the worker pool used for a run. The worker registry supplies execution
+settings and validates generated `model_id` values. To execute
 worker workflows during rewards, use the unified launcher:
 
 ```bash
@@ -306,13 +436,13 @@ override the script allocation, for example `sbatch --partition=cpu ...` on a
 cluster with a dedicated CPU partition. No GPU resource is requested.
 
 The default uses each model's `max_output_tokens` from the YAML configuration.
-The frontier budgets are grounded in observed maxima from an artificial HLE
-analysis benchmark, with about 20% headroom and upward rounding to 4,096-token
-boundaries, then adjusted when the 50-question pilot reached a limit: Gemini
-12,288; GPT 32,768; Grok 24,576; Kimi 32,768; Claude 65,536; DeepSeek 40,960;
-and GLM 65,536. The GPT and Claude original observations are closest-family
-proxies because the benchmark versions differ from the models in the frontier
-pool. Use `--max-worker-tokens N` for one fixed pool-wide cap.
+The frontier pool uses OpenRouter's advertised maximum completion limits for
+DeepSeek (393,216), Kimi (943,718), and GLM (131,072), checked on October 2, 2026.
+The remaining caps are benchmark-based budgets: Gemini 12,288; GPT 32,768;
+Grok 24,576; and Claude 65,536. These budgets were based on observed output
+lengths with headroom and pilot adjustments, rather than provider maximums.
+The GPT and Claude original observations used closest-family proxies.
+Use `--max-worker-tokens N` for one fixed pool-wide cap.
 
 For runs where truncation is less acceptable than potentially extreme cost,
 use `--use-model-context-limit`. Every worker request will then use that
@@ -352,6 +482,48 @@ attempts used. Remote worker workflows execute with up to 16 rollouts in flight
 by default. Each worker generation uses that model's configured
 `context_length`; use `--max-worker-tokens` to impose a smaller pool-wide
 ceiling. Tune concurrency with `--workflow-concurrency`.
+
+## FrontierScience Physics benchmark
+
+OpenAI's [FrontierScience dataset](https://huggingface.co/datasets/openai/frontierscience)
+is available as `frontierscience-physics` (70 public test questions tagged
+exactly `physics`), `frontierscience-olympiad-physics` (50), and
+`frontierscience-research-physics` (20). These selectors are evaluation-only
+and excluded from training choices. IDs include the track, source
+`task_group_id`, and the original track row index;
+problem text and gold answers are preserved verbatim.
+The public Research physics file contains an exact duplicate: the 20 rows
+represent 19 distinct questions. The loader retains all source rows; disclose
+this duplication when reporting scores and do not count it as independent evidence.
+
+Export the normalized test set for the resumable evaluation commands:
+
+```bash
+.venv/bin/python - <<'PY'
+from pathlib import Path
+from theo_conductor.data import load_conductor_dataset
+
+Path("outputs/frontierscience").mkdir(parents=True, exist_ok=True)
+load_conductor_dataset("frontierscience-physics").to_json(
+    "outputs/frontierscience/physics.jsonl"
+)
+PY
+.venv/bin/python -m theo_conductor.evaluate model \
+  --input outputs/frontierscience/physics.jsonl \
+  --config configs/worker_pool_frontier.yaml --model gpt-6.1-sol \
+  --output-dir outputs/frontierscience/direct
+```
+
+The same JSONL works with `plans` and `workflows`. To use `theo-benchmark`,
+pass `--dataset frontierscience-physics --full-dataset`; train/test splitting
+is rejected for this benchmark. Loading requires access to Hugging Face.
+
+Research rows select rubric grading automatically: the judge assesses the full
+response against the supplied ten-point rubric, and `judge_score >= 7` determines
+correctness. Numeric scores are retained in `judge_score`. Olympiad rows use
+short-answer semantic grading. The judge model and number of independent samples
+remain configurable; these settings must be disclosed when comparing with OpenAI.
+Gold answers and rubrics are grading data and are not sent to solvers or planners.
 
 ## Frontier HLE Physics benchmark
 

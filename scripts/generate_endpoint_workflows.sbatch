@@ -14,7 +14,7 @@
 set -Eeuo pipefail
 
 REPO_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-PROMPT_FILE="${CONDUCTOR_PROMPT_FILE:-${REPO_ROOT}/CONDUCTOR_PROMPT.md}"
+PROMPT_FILE="${CONDUCTOR_PROMPT_FILE:-${REPO_ROOT}/conductor-prompt-refined.md}"
 RUN_ID="${SLURM_JOB_ID:-manual}"
 OUTPUT_DIR="${WORKFLOW_OUTPUT_DIR:-${REPO_ROOT}/outputs/hle-kimi-glm-workflows-${RUN_ID}}"
 

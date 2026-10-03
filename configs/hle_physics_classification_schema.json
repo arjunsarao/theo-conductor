@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "tag_1": {
+      "type": "string",
+      "enum": [
+        "Condensed Matter Physics",
+        "Quantum Information, Science & Technology",
+        "Atomic, Molecular & Optical Physics",
+        "High Energy & Particle Physics",
+        "Mathematical Physics",
+        "Gravitation, Cosmology & Astrophysics",
+        "Statistical Physics & Thermodynamics",
+        "Nuclear Physics",
+        "Nonlinear Dynamics & Classical Mechanics",
+        "Fluid & Plasma Dynamics",
+        "Biophysics",
+        "Electromagnetism",
+        "Optics & Photonics",
+        "Experimental & Applied Physics"
+      ]
+    },
+    "tag_2": {
+      "type": "string",
+      "enum": [
+        "Condensed Matter Physics",
+        "Quantum Information, Science & Technology",
+        "Atomic, Molecular & Optical Physics",
+        "High Energy & Particle Physics",
+        "Mathematical Physics",
+        "Gravitation, Cosmology & Astrophysics",
+        "Statistical Physics & Thermodynamics",
+        "Nuclear Physics",
+        "Nonlinear Dynamics & Classical Mechanics",
+        "Fluid & Plasma Dynamics",
+        "Biophysics",
+        "Electromagnetism",
+        "Optics & Photonics",
+        "Experimental & Applied Physics"
+      ]
+    },
+    "tag_3": {
+      "type": "string",
+      "enum": [
+        "Condensed Matter Physics",
+        "Quantum Information, Science & Technology",
+        "Atomic, Molecular & Optical Physics",
+        "High Energy & Particle Physics",
+        "Mathematical Physics",
+        "Gravitation, Cosmology & Astrophysics",
+        "Statistical Physics & Thermodynamics",
+        "Nuclear Physics",
+        "Nonlinear Dynamics & Classical Mechanics",
+        "Fluid & Plasma Dynamics",
+        "Biophysics",
+        "Electromagnetism",
+        "Optics & Photonics",
+        "Experimental & Applied Physics"
+      ]
+    }
+  },
+  "required": ["tag_1", "tag_2", "tag_3"],
+  "additionalProperties": false
+}

@@ -20,7 +20,7 @@ set -Eeuo pipefail
 REPO_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 RUN_ID="${SLURM_JOB_ID:-manual}"
 OUTPUT_DIR="${PLAN_OUTPUT_DIR:-${REPO_ROOT}/outputs/hle-frontier-plan-sample-${RUN_ID}}"
-PROMPT_FILE="${CONDUCTOR_PROMPT_FILE:-${REPO_ROOT}/CONDUCTOR_PROMPT.md}"
+PROMPT_FILE="${CONDUCTOR_PROMPT_FILE:-${REPO_ROOT}/conductor-prompt-refined.md}"
 PYTHON_BIN="${THEO_PYTHON:-${REPO_ROOT}/.venv/bin/python}"
 SAMPLE_COUNT="${PLAN_SAMPLE_COUNT:-15}"
 [[ "$SAMPLE_COUNT" =~ ^[1-9][0-9]*$ ]] || {

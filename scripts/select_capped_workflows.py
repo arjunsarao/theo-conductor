@@ -11,17 +11,7 @@ from typing import Any
 import yaml
 
 
-def load_jsonl(path: Path) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    with path.open(encoding="utf-8") as stream:
-        for line_number, line in enumerate(stream, 1):
-            if not line.strip():
-                continue
-            value = json.loads(line)
-            if not isinstance(value, dict):
-                raise ValueError(f"{path}:{line_number} is not a JSON object")
-            records.append(value)
-    return records
+from theo_conductor.jsonio import read_jsonl as load_jsonl
 
 
 def main() -> None:
@@ -38,13 +28,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    results = load_jsonl(args.results)
-    capped_models = {
-        str(output.get("model_id"))
-        for record in results
-        for output in (record.get("worker_outputs") or {}).values()
-        if isinstance(output, dict) and output.get("finish_reason") == "length"
-    }
+    results = list({str(record["example_id"]): record for record in load_jsonl(args.results)}.values())
     if args.capped_only:
         target_ids = {
             str(record.get("example_id"))
@@ -72,15 +56,20 @@ def main() -> None:
                 )
             )
         }
+    capped_models = {
+        str(output.get("model_id"))
+        for record in results if str(record.get("example_id")) in target_ids
+        for output in (record.get("worker_outputs") or {}).values()
+        if isinstance(output, dict) and output.get("finish_reason") == "length"
+    }
     plans = [record for record in load_jsonl(args.plans) if str(record.get("dataset_id")) in target_ids]
-    if len(plans) != len(target_ids):
-        found = {str(record.get("dataset_id")) for record in plans}
+    found = {str(record.get("dataset_id")) for record in plans}
+    if len(plans) != len(target_ids) or found != target_ids:
         raise ValueError(f"Missing source plans for IDs: {sorted(target_ids - found)}")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    with args.output.open("w", encoding="utf-8") as stream:
-        for record in plans:
-            stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+    from theo_conductor.jsonio import write_jsonl_atomic
+    write_jsonl_atomic(args.output, plans)
     config = yaml.safe_load(args.config.read_text(encoding="utf-8"))
     doubled: dict[str, tuple[int, int]] = {}
     for model in config.get("models", []):

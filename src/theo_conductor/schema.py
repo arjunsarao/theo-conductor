@@ -26,6 +26,7 @@ class Task(BaseModel):
     task_type: str
     difficulty: Difficulty
     question: str
+    image: str | None = None
     workflow: List[Step]
 
     @classmethod
@@ -35,6 +36,7 @@ class Task(BaseModel):
             task_type=data["task_type"],
             difficulty=Difficulty(data["difficulty"]),
             question=data["question"],
+            image=data.get("image"),
             workflow=workflow,
         )
 
@@ -118,9 +120,6 @@ class ModelSpec:
     cost_per_1m_output_tokens: float | None = None  # $USD
     tags: Set[str] = field(default_factory=set)
     role: str | None = None
-    best_for: str | None = None
-    useful_for: str | None = None
-    routing_note: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in ("context_length", "max_output_tokens", "output_budget_observed_tokens"):
@@ -133,7 +132,7 @@ class ModelSpec:
             if value is not None and value < 0:
                 raise ValueError(f"{field_name} must be non-negative")
 
-        for field_name in ("role", "best_for", "useful_for", "routing_note"):
+        for field_name in ("role",):
             value = getattr(self, field_name)
             if value is not None and not value.strip():
                 raise ValueError(f"{field_name} must be non-empty when provided")

@@ -23,7 +23,7 @@ from theo_conductor.data import load_hle_physics_text_dataset
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PROMPT = REPO_ROOT / "CONDUCTOR_PROMPT.md"
+DEFAULT_PROMPT = REPO_ROOT / "conductor-prompt-refined.md"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "outputs" / "hle-endpoint-workflows"
 DEFAULT_BASE_URL = "http://10.100.50.35:30080/v1"
 QUESTION_MARKER = "<USER QUESTION>"
@@ -65,77 +65,13 @@ def endpoint_specs() -> list[dict[str, str]]:
     ]
 
 
-def load_prompt_template(path: Path) -> tuple[str, list[str]]:
-    template = path.read_text(encoding="utf-8")
-    if template.count(QUESTION_MARKER) != 1:
-        raise ValueError(f"{path} must contain exactly one {QUESTION_MARKER!r} marker")
-    model_ids = list(dict.fromkeys(re.findall(r'^- model_id="([^"]+)"', template, re.MULTILINE)))
-    if not model_ids:
-        raise ValueError(f"Could not find any worker model_id entries in {path}")
-    return template, model_ids
+from theo_conductor.prompt import load_prompt_template
 
 
-def workflow_response_format(model_ids: list[str]) -> dict[str, Any]:
-    step = {
-        "type": "object",
-        "properties": {
-            "step_id": {"type": "string", "minLength": 1},
-            "model_id": {"type": "string", "enum": model_ids},
-            "instruction": {"type": "string", "minLength": 1},
-            "access_list": {"type": "array", "items": {"type": "string"}},
-        },
-        "required": ["step_id", "model_id", "instruction", "access_list"],
-        "additionalProperties": False,
-    }
-    return {
-        "type": "json_schema",
-        "json_schema": {
-            "name": "conductor_workflow",
-            "strict": True,
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "task_type": {
-                        "type": "string",
-                        "enum": [
-                            "physics", "chemistry", "biology", "mathematics",
-                            "computer_science", "engineering", "earth_and_space_science",
-                            "medicine_and_health", "social_science", "humanities",
-                            "interdisciplinary", "other",
-                        ],
-                    },
-                    "difficulty": {"type": "string", "enum": ["easy", "medium", "hard"]},
-                    "workflow": {"type": "array", "items": step, "minItems": 1, "maxItems": 7},
-                },
-                "required": ["task_type", "difficulty", "workflow"],
-                "additionalProperties": False,
-            },
-        },
-    }
+from theo_conductor.prompt import workflow_response_format
 
 
-def validate_plan(plan: Any, model_ids: set[str]) -> dict[str, Any]:
-    if not isinstance(plan, dict):
-        raise ValueError("completion is not a JSON object")
-    workflow = plan.get("workflow")
-    if not isinstance(workflow, list) or not 1 <= len(workflow) <= 7:
-        raise ValueError("workflow must contain between 1 and 7 steps")
-    seen: set[str] = set()
-    for index, step in enumerate(workflow):
-        if not isinstance(step, dict):
-            raise ValueError(f"workflow step {index} is not an object")
-        step_id = step.get("step_id")
-        if not isinstance(step_id, str) or not step_id or step_id in seen:
-            raise ValueError(f"workflow step {index} has an empty or duplicate step_id")
-        if step.get("model_id") not in model_ids:
-            raise ValueError(f"workflow step {step_id!r} has an unavailable model_id")
-        access_list = step.get("access_list")
-        if not isinstance(access_list, list) or any(
-            item != "question" and item not in seen for item in access_list
-        ):
-            raise ValueError(f"workflow step {step_id!r} has a forward or unknown dependency")
-        seen.add(step_id)
-    return plan
+from theo_conductor.prompt import validate_plan
 
 
 def usage_dict(completion: Any) -> dict[str, Any] | None:

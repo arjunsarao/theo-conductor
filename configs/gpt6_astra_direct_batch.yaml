@@ -10,7 +10,6 @@ models:
     cost_per_1m_input_tokens: 5.0
     cost_per_1m_output_tokens: 25.0
     role: "direct HLE solver"
-    best_for: "Direct scientific and mathematical problem solving without conductor routing."
     client:
       type: openai_compatible
       base_url: https://openrouter.ai/api/v1

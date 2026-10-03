@@ -9,17 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-def load_jsonl(path: Path) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    with path.open(encoding="utf-8") as stream:
-        for line_number, line in enumerate(stream, 1):
-            if not line.strip():
-                continue
-            value = json.loads(line)
-            if not isinstance(value, dict):
-                raise ValueError(f"{path}:{line_number} is not a JSON object")
-            records.append(value)
-    return records
+from theo_conductor.jsonio import read_jsonl as load_jsonl
 
 
 def main() -> None:

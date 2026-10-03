@@ -1,0 +1,18 @@
+models:
+  - model_idx: fugu-max
+    provider: openrouter
+    display_name: Sakana Fugu Max
+    name: fugu-max
+    context_length: 1000000
+    max_output_tokens: 128000
+    supports_tools: true
+    supports_json: true
+    cost_per_1m_input_tokens: 2.0
+    cost_per_1m_output_tokens: 6.0
+    role: "direct HLE solver"
+    client:
+      type: openai_compatible
+      base_url: https://openrouter.ai/api/v1
+      model: sakana/fugu-max
+      timeout_seconds: 7200
+

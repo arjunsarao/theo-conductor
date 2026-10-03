@@ -1,6 +1,6 @@
 [project]
 name = "theo-conductor"
-version = "0.1.0"
+version = "0.2.0"
 description = "LLM orchestration and routing system"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -26,6 +26,7 @@ dependencies = [
 ]
 
 [project.scripts]
+theo-evaluate = "theo_conductor.evaluate:main"
 theo-plan = "theo_conductor.plan:main"
 theo-trace = "theo_conductor.trace_analysis:main"
 theo-benchmark = "theo_conductor.benchmark:main"

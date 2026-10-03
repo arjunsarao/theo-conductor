@@ -13,7 +13,9 @@ def default_tool_registry(model_registry, *, ask_user: bool = False) -> ToolRegi
     handler = (
         InteractiveClarificationHandler()
         if ask_user
-        else ConductorClarificationHandler(model_registry)
+        else ConductorClarificationHandler(
+            model_registry, model_id=model_registry.conductor_model or "gpt-6-astra"
+        )
     )
     return ToolRegistry([
         RequestClarificationTool(handler),

@@ -4,6 +4,58 @@ import pytest
 from theo_conductor import data
 
 
+def test_frontierscience_physics_tracks_and_normalization(monkeypatch):
+    calls = []
+
+    def fake_load(name, **kwargs):
+        calls.append((name, kwargs))
+        track = kwargs["data_files"]["test"].split("/")[0]
+        return Dataset.from_list([
+            {"problem": f"{track} physics", "answer": f"{track} gold or rubric",
+             "subject": "physics", "task_group_id": "shared-id"},
+            {"problem": "Chemistry", "answer": "gold", "subject": "chemistry",
+             "task_group_id": "chemistry-id"},
+        ])
+
+    monkeypatch.setattr(data, "load_dataset", fake_load)
+    loaded = data.load_conductor_dataset("frontierscience-physics", seed=7)
+    assert len(loaded) == 2
+    assert len(set(loaded["id"])) == 2
+    assert loaded["subject"] == ["physics", "physics"]
+    assert loaded["is_multimodal"] == [False, False]
+    assert loaded["reference_answer"] == [None, None]
+    for row in loaded:
+        assert row["id"].startswith(f"frontierscience-{row['track']}-shared-id-")
+        assert row["question"] == f"{row['track']} physics"
+        assert row["answer"] == f"{row['track']} gold or rubric"
+        assert row["task_group_id"] == "shared-id"
+        assert row["answer_type"] == ("rubric10" if row["track"] == "research" else "freeForm")
+    assert all(name == "openai/frontierscience" for name, _ in calls)
+    assert all(kwargs["split"] == "test" for _, kwargs in calls)
+    assert loaded["id"] == data.load_conductor_dataset("frontierscience-physics", seed=7)["id"]
+    assert len(data.load_conductor_dataset("frontierscience-physics", max_samples=1)) == 1
+    for track in ("olympiad", "research"):
+        selected = data.load_conductor_dataset(f"frontierscience-{track}-physics")
+        assert selected["track"] == [track]
+    assert not set(data.FRONTIERSCIENCE_DATASETS) & set(data.TRAINING_DATASETS)
+    with pytest.raises(ValueError, match="evaluation-only"):
+        data.build_conductor_splits("frontierscience-physics")
+    with pytest.raises(ValueError, match="track"):
+        data.load_frontierscience_physics_dataset("unknown")
+
+
+def test_frontierscience_distinguishes_questions_in_same_task_group(monkeypatch):
+    raw = Dataset.from_list([
+        {"problem": question, "answer": "rubric", "subject": "physics", "task_group_id": "group"}
+        for question in ("First subtask", "Second subtask", "First subtask")
+    ])
+    monkeypatch.setattr(data, "load_dataset", lambda *args, **kwargs: raw)
+    loaded = data.load_frontierscience_physics_dataset("research")
+    assert len(set(loaded["id"])) == 3
+    assert loaded["task_group_id"] == ["group", "group", "group"]
+    assert loaded["source_row_index"] == [0, 1, 2]
+
+
 def _rows(prefix: str, count: int) -> Dataset:
     return Dataset.from_list(
         [

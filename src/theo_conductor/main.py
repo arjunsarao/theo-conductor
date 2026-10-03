@@ -129,11 +129,6 @@ async def create_task(question: str, registry: ModelRegistry, conductor_model: s
         instruction=build_conductor_prompt(
             question,
             registry,
-            tools=(
-                ["request_clarification: resolve a consequential ambiguity via the configured authority."]
-                if any(spec.supports_tools for spec in registry._models.values())
-                else None
-            ),
         ),
         # build_conductor_prompt already includes the complete question.
         question="",

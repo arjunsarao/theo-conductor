@@ -1,0 +1,16 @@
+models:
+  - model_idx: jev-router
+    provider: openrouter
+    display_name: TypeSafe Jev-Router
+    name: jev-router
+    context_length: 1000000
+    max_output_tokens: 32768
+    supports_tools: false
+    supports_json: false
+    role: "direct HLE solver"
+    client:
+      type: openai_compatible
+      base_url: https://openrouter.ai/api/v1
+      model: typesafe/jev-router
+      timeout_seconds: 7200
+

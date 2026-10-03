@@ -1,15 +1,19 @@
 import json
 
 from theo_conductor.hle_benchmark_view import (
+    PHYSICS_TOPIC_TAGS,
     benchmark_record_map,
     capability_comparison,
     clarification_rows,
     discover_hle_direct_benchmarks,
     discover_hle_benchmark_runs,
+    exact_mcnemar_p_value,
     hle_run_metrics,
     load_hle_benchmark,
+    load_primary_topic_classifications,
     pairwise_outcome_counts,
     result_outcome,
+    topic_success_rows,
     worker_step_rows,
 )
 
@@ -222,6 +226,22 @@ def test_capability_comparison_classifies_movement_and_retries():
     assert benchmark_record_map(baseline)["retry"]["correct"] is True
 
 
+def test_exact_mcnemar_p_value_uses_two_sided_binomial_test():
+    assert exact_mcnemar_p_value(0, 0) == 1.0
+    assert exact_mcnemar_p_value(5, 0) == 0.0625
+    assert exact_mcnemar_p_value(4, 1) == 0.375
+    assert exact_mcnemar_p_value(1, 4) == 0.375
+
+
+def test_exact_mcnemar_p_value_rejects_negative_counts():
+    try:
+        exact_mcnemar_p_value(-1, 2)
+    except ValueError as exc:
+        assert str(exc) == "McNemar counts must be non-negative"
+    else:
+        raise AssertionError("negative counts should be rejected")
+
+
 def test_outcomes_and_pairwise_comparison_keep_failures_out_of_incorrect():
     workflow_failed = _record(
         "workflow-failed", correct=False, error="APIStatusError: unavailable"
@@ -240,6 +260,47 @@ def test_outcomes_and_pairwise_comparison_keep_failures_out_of_incorrect():
     assert counts["Left failed"] == 1
     assert counts["Both failed"] == 1
     assert counts["Both incorrect"] == 0
+
+
+def test_loads_primary_topics_and_aggregates_judged_success(tmp_path):
+    classifications = tmp_path / "classifications.jsonl"
+    classifications.write_text(
+        "\n".join(
+            json.dumps({"id": example_id, "tag_1": topic})
+            for example_id, topic in (
+                ("a", "Condensed Matter Physics"),
+                ("b", "Condensed Matter Physics"),
+                ("c", "Nuclear Physics"),
+                ("d", "Nuclear Physics"),
+            )
+        )
+        + "\n"
+    )
+    topics = load_primary_topic_classifications(classifications)
+    records = [
+        _record("a", correct=True),
+        _record("b", correct=False),
+        _record("c", correct=True),
+        _record("d", correct=False, error="request failed"),
+        _record("not-classified", correct=True),
+    ]
+
+    rows = topic_success_rows(records, topics)
+    by_topic = {row["Topic"]: row for row in rows}
+
+    assert [row["Topic"] for row in rows] == list(PHYSICS_TOPIC_TAGS)
+    assert by_topic["Condensed Matter Physics"] == {
+        "Topic": "Condensed Matter Physics",
+        "Order": 0,
+        "Questions": 2,
+        "Scored": 2,
+        "Correct": 1,
+        "Success rate": 0.5,
+    }
+    assert by_topic["Nuclear Physics"]["Questions"] == 2
+    assert by_topic["Nuclear Physics"]["Scored"] == 1
+    assert by_topic["Nuclear Physics"]["Success rate"] == 1.0
+    assert by_topic["Biophysics"]["Success rate"] is None
 
 
 def test_metrics_distinguish_failures_and_flatten_worker_steps():

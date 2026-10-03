@@ -26,6 +26,50 @@ TRAINING_DATASETS = (
     "gpqa",
     "hle-gpqa",
 )
+FRONTIERSCIENCE_DATASET_ID = "openai/frontierscience"
+FRONTIERSCIENCE_DATASETS = (
+    "frontierscience-physics",
+    "frontierscience-olympiad-physics",
+    "frontierscience-research-physics",
+)
+BENCHMARK_DATASETS = TRAINING_DATASETS + FRONTIERSCIENCE_DATASETS
+
+
+def load_frontierscience_physics_dataset(track: str | None = None) -> Dataset:
+    """Load exact physics tags from the public FrontierScience test files.
+
+    Research answers are rubrics, retained verbatim for judging only.
+    Research rows select ten-point rubric grading in the evaluation pipeline.
+    """
+    if track not in (None, "olympiad", "research"):
+        raise ValueError("track must be olympiad, research, or None")
+    datasets = []
+    for selected_track in ((track,) if track else ("olympiad", "research")):
+        raw = load_dataset(
+            FRONTIERSCIENCE_DATASET_ID,
+            data_files={"test": f"{selected_track}/test.jsonl"},
+            split="test",
+            token=os.getenv("HF_TOKEN"),
+        )
+        raw = raw.add_column("source_row_index", list(range(len(raw)))).filter(
+            lambda ex: ex["subject"] == "physics", keep_in_memory=True,
+        )
+        normalized = raw.rename_column("problem", "question").map(
+            lambda ex: {
+                "id": (f"frontierscience-{selected_track}-{ex['task_group_id']}-"
+                       f"{ex['source_row_index']}"),
+                "answer_type": "rubric10" if selected_track == "research" else "freeForm",
+                "reference_answer": None,
+                "is_multimodal": False,
+                "track": selected_track,
+            },
+            keep_in_memory=True,
+        ).select_columns([
+            "id", "question", "answer", "answer_type", "reference_answer",
+            "subject", "is_multimodal", "track", "task_group_id", "source_row_index",
+        ])
+        datasets.append(normalized)
+    return concatenate_datasets(datasets)
 
 
 def _cached_hle_test_split() -> Dataset | None:
@@ -244,9 +288,9 @@ def load_conductor_dataset(
     max_samples: int | None = None,
 ) -> Dataset:
     """Load a normalized dataset used by conductor training and evaluation."""
-    if dataset_name not in TRAINING_DATASETS:
+    if dataset_name not in BENCHMARK_DATASETS:
         raise ValueError(
-            f"Unknown dataset {dataset_name!r}; choose one of: {', '.join(TRAINING_DATASETS)}"
+            f"Unknown dataset {dataset_name!r}; choose one of: {', '.join(BENCHMARK_DATASETS)}"
         )
     if max_samples is not None and max_samples < 0:
         raise ValueError("max_samples must be non-negative or None")
@@ -255,7 +299,10 @@ def load_conductor_dataset(
         # Preserve the established 2,000-row default for existing runs.
         limit = DEFAULT_MEGASCIENCE_SAMPLES if max_samples is None else max_samples
         return load_megascience_dataset(seed=seed, max_samples=limit)
-    if dataset_name == "hle":
+    if dataset_name in FRONTIERSCIENCE_DATASETS:
+        track = dataset_name.removeprefix("frontierscience-").removesuffix("-physics")
+        dataset = load_frontierscience_physics_dataset(None if track == "physics" else track)
+    elif dataset_name == "hle":
         dataset = load_hle_physics_dataset()
     elif dataset_name == "hle-physics-text":
         dataset = load_hle_physics_text_dataset()
@@ -284,6 +331,8 @@ def build_conductor_splits(
     validation_samples: int = 200,
 ) -> DatasetDict:
     """Return deterministic train/evaluation splits for a selected dataset."""
+    if dataset_name in FRONTIERSCIENCE_DATASETS:
+        raise ValueError("FrontierScience is evaluation-only; use the full test dataset")
     dataset = load_conductor_dataset(dataset_name, seed=seed, max_samples=total_samples)
     if validation_samples <= 0 or validation_samples >= len(dataset):
         raise ValueError(

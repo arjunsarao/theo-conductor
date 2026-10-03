@@ -79,8 +79,8 @@ class ConductorClarificationHandler:
                 if spec.name == self.model_id or spec.display_name == "GPT-6 Astra":
                     return str(key), spec
         raise ValueError(
-            "request_clarification requires GPT-6 Astra in the model registry; "
-            "add model_id 'gpt-6-astra' or enable user clarification"
+            f"request_clarification requires model {self.model_id!r} in the model registry; "
+            "configure conductor_model or enable user clarification"
         )
 
     @staticmethod

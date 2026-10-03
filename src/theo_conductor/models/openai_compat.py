@@ -154,8 +154,24 @@ class OpenAICompatibleClient:
             terminal = {"completed", "failed", "expired", "cancelled"}
             while batch.get("status") not in terminal:
                 await asyncio.sleep(self.batch_poll_interval_seconds)
-                response = await client.get(f"{batches_url}/{batch_id}")
-                response.raise_for_status()
+                try:
+                    response = await client.get(f"{batches_url}/{batch_id}")
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    status = exc.response.status_code
+                    if status == 429 or status >= 500:
+                        print(
+                            f"OpenRouter batch {batch_id} poll returned HTTP {status}; retrying",
+                            flush=True,
+                        )
+                        continue
+                    raise
+                except httpx.TransportError as exc:
+                    print(
+                        f"OpenRouter batch {batch_id} poll transport error: {exc}; retrying",
+                        flush=True,
+                    )
+                    continue
                 batch = response.json()
         if batch.get("status") != "completed":
             raise RuntimeError(

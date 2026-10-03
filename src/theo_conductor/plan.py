@@ -193,6 +193,8 @@ async def _generate_one(
         "gold_answer": row.get("answer"),
         "reference_answer": row.get("reference_answer"),
         "answer_type": row.get("answer_type"),
+        "track": row.get("track"),
+        "task_group_id": row.get("task_group_id"),
         "subject": row.get("subject"),
         "is_multimodal": bool(row.get("is_multimodal", False)),
         "rank": 0,

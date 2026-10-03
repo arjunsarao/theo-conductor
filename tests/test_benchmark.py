@@ -1,5 +1,6 @@
 import asyncio
 import json
+import pytest
 
 from theo_conductor.benchmark import (
     bootstrap_accuracy_ci,
@@ -8,11 +9,48 @@ from theo_conductor.benchmark import (
     judge_records,
     oracle_routing_breakdown,
     parse_judge_batch,
+    parse_rubric_judge_batch,
     run_benchmark,
     summarize_records,
 )
 from theo_conductor.models.registry import ModelRegistry
 from theo_conductor.schema import ModelResponse, ModelSpec
+
+
+@pytest.mark.parametrize("score", [0, 6.5, 7, 10])
+def test_rubric_parser_preserves_scores(score):
+    assert parse_rubric_judge_batch(
+        json.dumps([{"id": "a", "score": score, "reason": "criterion points"}]), ["a"]
+    ) == {"a": (score, "criterion points")}
+
+
+@pytest.mark.parametrize("score", [True, "7", -1, 11, float("nan"), float("inf"), None])
+def test_rubric_parser_rejects_invalid_scores(score):
+    with pytest.raises(ValueError):
+        parse_rubric_judge_batch(json.dumps([{"id": "a", "score": score, "reason": "why"}]), ["a"])
+
+
+def test_rubric_parser_rejects_duplicate_and_missing_ids():
+    item = {"id": "a", "score": 7, "reason": "why"}
+    for payload in ([item, item], [item], []):
+        with pytest.raises(ValueError):
+            parse_rubric_judge_batch(json.dumps(payload), ["a", "b"])
+
+
+def test_rubric_batch_grading_threshold_and_mixed_tracks():
+    class Judge:
+        async def generate(self, **kwargs):
+            items = json.loads(kwargs["question"].split("\n", 1)[1])
+            rubric = "score" in kwargs["response_format"]["json_schema"]["schema"]["items"]["properties"]
+            return ModelResponse(text=json.dumps([
+                {"id": item["id"], **({"score": float(item["candidate_response"])} if rubric else {"correct": True}),
+                 "reason": "points awarded"} for item in items
+            ]))
+    rows = [{"response": str(score), "gold_answer": "rubric", "answer_type": "rubric10"}
+            for score in (6.5, 7, 10)] + [{"response": "answer", "gold_answer": "answer"}]
+    asyncio.run(judge_records(rows, client=Judge(), attempts=1))
+    assert [row["correct"] for row in rows] == [False, True, True, True]
+    assert [row["judge_score"] for row in rows] == [6.5, 7, 10, None]
 
 
 class AnswerClient:

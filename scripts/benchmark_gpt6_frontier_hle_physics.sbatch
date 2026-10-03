@@ -32,7 +32,7 @@ command -v uv >/dev/null || { echo "Required command not found: uv" >&2; exit 2;
 }
 
 plan_args=(
-  --prompt-file "${CONDUCTOR_PROMPT_FILE:-${REPO_ROOT}/CONDUCTOR_PROMPT.md}"
+  --prompt-file "${CONDUCTOR_PROMPT_FILE:-${REPO_ROOT}/conductor-prompt-refined.md}"
   --output-dir "$PLAN_DIR"
   --planner-model-id gpt-6-astra
   --sample-count 202

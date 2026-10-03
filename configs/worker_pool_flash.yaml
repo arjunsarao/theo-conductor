@@ -5,7 +5,7 @@
 # time-dependent overrides can change actual charges.
 # Authentication: export OPENROUTER_API_KEY before loading this config.
 # API: POST https://openrouter.ai/api/v1/chat/completions (OpenAI compatible).
-# Descriptions are paraphrased into the registry's role/best_for fields.
+# Descriptions are paraphrased into the registry's role field.
 # Output limits follow catalog top_provider.max_completion_tokens.
 conductor_model: Qwen/Qwen3.8-27B
 train_gpu_set: "0"
@@ -24,7 +24,6 @@ models:
     # Weekday UTC 01:00-04:00 and 06:00-10:00 rates: $0.30/$1.20.
     # Cache reads: $0.003/M base, $0.006/M during those peak periods.
     role: "sparse multimodal model using a causal encoder-decoder architecture"
-    best_for: "Text and image tasks with large contexts."
     deployment:
       mode: remote
     client:
@@ -43,7 +42,6 @@ models:
     cost_per_1m_input_tokens: 0.75
     cost_per_1m_output_tokens: 3.75
     role: "multimodal software and reasoning model"
-    best_for: "Software engineering, agent tasks, and reasoning across multiple steps."
     deployment:
       mode: remote
     client:
@@ -63,7 +61,6 @@ models:
     cost_per_1m_input_tokens: 0.15
     cost_per_1m_output_tokens: 0.50
     role: "multimodal coding and agent model"
-    best_for: "Efficient programming and extended agent workflows with long contexts."
     deployment:
       mode: remote
     client:
@@ -82,7 +79,6 @@ models:
     cost_per_1m_input_tokens: 0.15
     cost_per_1m_output_tokens: 0.47
     role: "multimodal reasoning assistant"
-    best_for: "Coding, document and repository analysis, desktop tasks, charts, and video interpretation."
     deployment:
       mode: remote
     client:
@@ -101,7 +97,6 @@ models:
     cost_per_1m_input_tokens: 0.95
     cost_per_1m_output_tokens: 4.0
     role: "multimodal engineering and orchestration model"
-    best_for: "Extended coding projects, interface generation, and coordinating multiple agents."
     deployment:
       mode: remote
     client:
@@ -122,7 +117,6 @@ models:
     # Catalog rates above; individual endpoints list different rates/limits:
     # https://openrouter.ai/api/v1/models/nvidia/nemotron-3-ultra-550b-a55b/endpoints
     role: "open-weight reasoning and orchestration model"
-    best_for: "Reasoning and orchestration using a hybrid Transformer-Mamba MoE with 55B active parameters."
     deployment:
       mode: remote
     client:

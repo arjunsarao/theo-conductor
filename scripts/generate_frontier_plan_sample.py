@@ -26,7 +26,7 @@ from theo_conductor.data import load_hle_physics_text_dataset
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PROMPT = REPO_ROOT / "CONDUCTOR_PROMPT.md"
+DEFAULT_PROMPT = REPO_ROOT / "conductor-prompt-refined.md"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "outputs" / "hle-frontier-plan-sample"
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 QUESTION_MARKER = "<USER QUESTION>"
@@ -35,6 +35,14 @@ DATASET_NAME = "hle-physics-text"
 # Standard, non-batch OpenRouter list prices as of 2026-09-16. The live catalog
 # is snapshotted at run time and supersedes these values when it is available.
 MODEL_SPECS: tuple[dict[str, Any], ...] = (
+    {
+        "model_id": "gpt-6.1-sol",
+        "display_name": "GPT-6.1 Sol",
+        "served_model": "openai/gpt-6.1-sol",
+        "input_usd_per_million": 2.0,
+        "output_usd_per_million": 10.0,
+        "pricing_url": "https://openrouter.ai/openai/gpt-6.1-sol",
+    },
     {
         "model_id": "gpt-6-astra",
         "display_name": "GPT-6 Astra",
@@ -78,6 +86,11 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--prompt-file", type=Path, default=DEFAULT_PROMPT)
+    parser.add_argument(
+        "--input-jsonl",
+        type=Path,
+        help="Use every row from this benchmark JSONL instead of sampling HLE Physics text.",
+    )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--base-url", default=os.getenv("OPENROUTER_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument(
@@ -100,79 +113,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_prompt_template(path: Path) -> tuple[str, list[str]]:
-    template = path.read_text(encoding="utf-8")
-    if template.count(QUESTION_MARKER) != 1:
-        raise ValueError(f"{path} must contain exactly one {QUESTION_MARKER!r} marker")
-    model_ids = list(dict.fromkeys(re.findall(r'^- model_id="([^"]+)"', template, re.MULTILINE)))
-    if not model_ids:
-        raise ValueError(f"Could not find worker model_id entries in {path}")
-    return template, model_ids
+from theo_conductor.prompt import load_prompt_template
 
 
-def response_format(worker_model_ids: list[str]) -> dict[str, Any]:
-    step = {
-        "type": "object",
-        "properties": {
-            "step_id": {"type": "string", "minLength": 1},
-            "model_id": {"type": "string", "enum": worker_model_ids},
-            "instruction": {"type": "string", "minLength": 1},
-            "access_list": {"type": "array", "items": {"type": "string"}},
-        },
-        "required": ["step_id", "model_id", "instruction", "access_list"],
-        "additionalProperties": False,
-    }
-    return {
-        "type": "json_schema",
-        "json_schema": {
-            "name": "conductor_workflow",
-            "strict": True,
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "task_type": {
-                        "type": "string",
-                        "enum": [
-                            "physics", "chemistry", "biology", "mathematics",
-                            "computer_science", "engineering", "earth_and_space_science",
-                            "medicine_and_health", "social_science", "humanities",
-                            "interdisciplinary", "other",
-                        ],
-                    },
-                    "difficulty": {"type": "string", "enum": ["easy", "medium", "hard"]},
-                    "workflow": {"type": "array", "items": step, "minItems": 1, "maxItems": 7},
-                },
-                "required": ["task_type", "difficulty", "workflow"],
-                "additionalProperties": False,
-            },
-        },
-    }
+from theo_conductor.prompt import workflow_response_format as response_format
 
 
-def validate_plan(plan: Any, worker_model_ids: set[str]) -> dict[str, Any]:
-    if not isinstance(plan, dict):
-        raise ValueError("completion is not a JSON object")
-    if plan.get("difficulty") not in {"easy", "medium", "hard"}:
-        raise ValueError("difficulty is missing or invalid")
-    workflow = plan.get("workflow")
-    if not isinstance(workflow, list) or not 1 <= len(workflow) <= 7:
-        raise ValueError("workflow must contain between 1 and 7 steps")
-    seen: set[str] = set()
-    for index, step in enumerate(workflow):
-        if not isinstance(step, dict):
-            raise ValueError(f"workflow step {index} is not an object")
-        step_id = step.get("step_id")
-        if not isinstance(step_id, str) or not step_id or step_id in seen:
-            raise ValueError(f"workflow step {index} has an empty or duplicate step_id")
-        if step.get("model_id") not in worker_model_ids:
-            raise ValueError(f"workflow step {step_id!r} has an unavailable model_id")
-        access_list = step.get("access_list")
-        if not isinstance(access_list, list) or any(
-            dependency != "question" and dependency not in seen for dependency in access_list
-        ):
-            raise ValueError(f"workflow step {step_id!r} has a forward or unknown dependency")
-        seen.add(step_id)
-    return plan
+from theo_conductor.prompt import validate_plan
 
 
 def json_dump(value: Any) -> dict[str, Any] | None:
@@ -392,9 +339,15 @@ async def generate_one(
             queue_ms = await pacer.wait()
             request_started_at = utc_now()
             request_started = time.perf_counter()
+            content: str | list[dict[str, Any]] = prompt
+            if row.get("image"):
+                content = [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": row["image"]}},
+                ]
             completion = await client.chat.completions.create(
                 model=spec["served_model"],
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": content}],
                 temperature=temperature,
                 max_tokens=max_tokens,
                 response_format=output_format,
@@ -431,6 +384,7 @@ async def generate_one(
             "dataset_id": str(row["id"]),
             "dataset_index": row["dataset_index"],
             "question": question,
+            "image": row.get("image"),
             "gold_answer": row.get("answer"),
             "reference_answer": row.get("reference_answer"),
             "answer_type": row.get("answer_type"),
@@ -578,19 +532,33 @@ async def run(args: argparse.Namespace) -> int:
 
     prompt_template, worker_model_ids = load_prompt_template(args.prompt_file)
     prompt_sha256 = hashlib.sha256(args.prompt_file.read_bytes()).hexdigest()
-    dataset = load_hle_physics_text_dataset()
+    if args.input_jsonl:
+        dataset = load_jsonl(args.input_jsonl)
+        for index, row in enumerate(dataset):
+            row.setdefault("dataset_index", index)
+        dataset_name = args.input_jsonl.stem
+    else:
+        dataset = load_hle_physics_text_dataset()
+        dataset_name = DATASET_NAME
     if len(dataset) != args.expect_samples:
         raise ValueError(f"Expected {args.expect_samples} HLE questions, found {len(dataset)}")
     if args.sample_count > len(dataset):
         raise ValueError("sample-count cannot exceed the dataset size")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    selected = choose_questions(
-        dataset,
-        path=args.output_dir / "selected_questions.json",
-        sample_count=args.sample_count,
-        seed=args.seed,
-    )
+    if args.input_jsonl:
+        if args.sample_count != len(dataset):
+            raise ValueError(
+                f"With --input-jsonl, sample-count must equal all {len(dataset)} input rows"
+            )
+        selected = [dict(row) for row in dataset]
+    else:
+        selected = choose_questions(
+            dataset,
+            path=args.output_dir / "selected_questions.json",
+            sample_count=args.sample_count,
+            seed=args.seed,
+        )
     selected_specs = tuple(
         spec for spec in MODEL_SPECS
         if not args.planner_model_id or spec["model_id"] in args.planner_model_id
@@ -725,7 +693,7 @@ async def run(args: argparse.Namespace) -> int:
     ]
     summary = {
         "updated_at": utc_now(),
-        "dataset": DATASET_NAME,
+        "dataset": dataset_name,
         "dataset_size": len(dataset),
         "sample_count": args.sample_count,
         "seed": args.seed,
