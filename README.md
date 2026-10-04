@@ -128,6 +128,62 @@ sbatch scripts/evaluate.sbatch workflows \
   --planner-model gpt-6.1-sol --samples 4 --output-dir outputs/full-run
 ```
 
+## Radar comparisons
+
+`theo-radar` produces one conductor-versus-system SVG per comparison in
+`figures/`, with side-by-side mean@k and pass@k panels, a shared 0–100% scale,
+category question counts, and overall scores. SVGs open in a browser and stay
+sharp when exported. No model calls or plotting dependencies are needed.
+Fugu comparisons use `#e10600`, OpenAI/GPT comparisons use `#0fa37f`, and
+Jev-Router uses `#e752bb`. Claude comparisons retain `#ca603b`; the conductor
+uses `#282d36`.
+Use the module form before refreshing installed console entry points:
+
+```bash
+.venv/bin/python -m theo_conductor.radar \
+  --dataset hle --dataset-label HLE-Diamond-Physics \
+  --metadata outputs/hle-diamond-physics-classifications-gpt-5.6-sol/classifications.jsonl \
+  --system Conductor outputs/hle-diamond-gpt61-frontier-mean4-22782 \
+  --system "Fable 5.1" outputs/hle-diamond-fable51-anthropic-batch-mean4
+
+.venv/bin/python -m theo_conductor.radar \
+  --dataset gpqa-d --dataset-label GPQA-Diamond-Physics \
+  --metadata path/to/gpqa_diamond.csv \
+  --system Conductor path/to/comparison/conductor \
+  --system "Fugu Ultra v2" path/to/comparison/fugu
+```
+
+Repeat `--system LABEL PATH [PATH ...]` to add systems or supply multiple
+independent result files. A directory resolves to `results.jsonl`, or to its
+`run-*/results.jsonl` files when there is no top-level snapshot. Managed
+`sample_index` slots and legacy single-sample files are supported; duplicate
+slots are rejected rather than counted as retries. Only combine files from the
+same system configuration and independent runs; the command cannot establish
+historical configuration compatibility from legacy records alone.
+
+HLE axes default to `tag_1`; `--tag tag_2`, `--tag tag_3`, or `--tag all`
+select other classifications. With `all`, category groups overlap. GPQA-D axes
+use the CSV's `Subdomain`, joined by `Record ID` to `gpqa-diamond-<Record ID>`.
+Alternatively supply JSONL with `id` (or `example_id`) and `subdomain`.
+`--metadata-format csv` supports cached CSV files without a `.csv` extension.
+
+The default k is the independent sample count; `--k` selects a smaller k using
+the shared combinatorial pass@k estimator. All systems must have identical
+question IDs, equal sample counts, complete outcomes, and metadata for every
+question; incomplete cohorts are rejected without dropping questions.
+Exhausted generation failures count as unsuccessful samples; missing plans,
+judge errors, and unknown verdicts block plotting. At least three nonempty
+categories are required for a radar chart. Small category counts can be
+unstable, and pass@k is an oracle metric, not answer-selection accuracy.
+
+`--output-dir` changes the destination and `--prefix` changes the filename
+prefix. `--dataset-label` sets the displayed cohort name; use the full name of
+the evaluated subset, such as `HLE-Diamond-Physics` or `GPQA-Diamond-Physics`.
+The accompanying `<prefix>-radar-metrics.json` records source paths and
+hashes, paired question IDs, denominators, per-category/overall metrics,
+generation failures, and comparison limitations. These are comparisons of the
+saved configured systems; equal k does not establish matched compute budgets.
+
 ## Training traces
 
 GRPO training reports normal trainer metrics to Weights & Biases by default

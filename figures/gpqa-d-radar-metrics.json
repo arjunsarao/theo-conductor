@@ -1,0 +1,268 @@
+{
+  "k": 4,
+  "samples": 4,
+  "questions": 86,
+  "question_ids": [
+    "gpqa-diamond-rec06pnAkLOr2t2mp",
+    "gpqa-diamond-rec0VuKUjt1SZ7NYv",
+    "gpqa-diamond-rec0wZvZgiz320KRs",
+    "gpqa-diamond-rec0yTRmO1o1xCA6H",
+    "gpqa-diamond-rec1zl5LvaatzGhFt",
+    "gpqa-diamond-rec260hNUCEj109Dj",
+    "gpqa-diamond-rec2UlKqC6RFHdcro",
+    "gpqa-diamond-rec32C1ZEapBnCC0E",
+    "gpqa-diamond-rec4JrWy7Il8ho5vk",
+    "gpqa-diamond-rec4UqStf9WUVif1f",
+    "gpqa-diamond-rec5eA17Qr1ucNLUf",
+    "gpqa-diamond-rec6sE2CRtD4drtHg",
+    "gpqa-diamond-rec7qmSnbud4FHSqL",
+    "gpqa-diamond-rec8y3ZrBOcLgNEkE",
+    "gpqa-diamond-rec9W28HgpEUeUN8k",
+    "gpqa-diamond-recBhnXrUyTJ6WHIR",
+    "gpqa-diamond-recDytVnNYZe2HuUU",
+    "gpqa-diamond-recE2ihVfqEK4R9d0",
+    "gpqa-diamond-recG1ljJQcVy6CbSl",
+    "gpqa-diamond-recGFKDUd8qgz81Zl",
+    "gpqa-diamond-recI1ls9OXdxatHQn",
+    "gpqa-diamond-recIIUynGGpsGEYuo",
+    "gpqa-diamond-recIMcQfaQNa6vzsT",
+    "gpqa-diamond-recINGR1z01Fh1Z3A",
+    "gpqa-diamond-recIj8lR4tuDgrHou",
+    "gpqa-diamond-recJpyGtGIsxulevT",
+    "gpqa-diamond-recKcjTwONILZqHAX",
+    "gpqa-diamond-recKm6LNWykGapmCr",
+    "gpqa-diamond-recKv4hFyNpViUXnL",
+    "gpqa-diamond-recLB0EkQ54bYVhnd",
+    "gpqa-diamond-recLrRirj7iXoB0rU",
+    "gpqa-diamond-recMicVBcqy1xM1jq",
+    "gpqa-diamond-recN4DY9Q5V03glmQ",
+    "gpqa-diamond-recNAiPUKOulQbKVP",
+    "gpqa-diamond-recNu3MXkvWUzHZr9",
+    "gpqa-diamond-recOYsaYs6RmtlTDy",
+    "gpqa-diamond-recPIzpnuYpB4yvmp",
+    "gpqa-diamond-recPL4ZPpVYxgMu57",
+    "gpqa-diamond-recPSTGXK3P39yNYT",
+    "gpqa-diamond-recPzW1WqRnPs57D6",
+    "gpqa-diamond-recQ8oxSY2aCwFRS8",
+    "gpqa-diamond-recRTiyaRymerDJ4y",
+    "gpqa-diamond-recRZjaElf8ft7xTq",
+    "gpqa-diamond-recReg13iV2HwJTaA",
+    "gpqa-diamond-recRhwQwHijW0gCLo",
+    "gpqa-diamond-recS48OsU6kVadBPW",
+    "gpqa-diamond-recSBcGLPatKb3Ygu",
+    "gpqa-diamond-recUc29lMDBEvurYo",
+    "gpqa-diamond-recV1nqYQvpII94oC",
+    "gpqa-diamond-recVE8cUNHpHZIAvL",
+    "gpqa-diamond-recWXwn9v4IG9ZrM6",
+    "gpqa-diamond-recXsuOHRBLcyenF2",
+    "gpqa-diamond-recXvQ6gWAmyakrpD",
+    "gpqa-diamond-recaXdGn3FAIkxLGM",
+    "gpqa-diamond-recatj4YXzbOaq3Ar",
+    "gpqa-diamond-reccVBrYdwsB84fGy",
+    "gpqa-diamond-recdya6FuYraBU5Rh",
+    "gpqa-diamond-receYQxnUBvxPcvbQ",
+    "gpqa-diamond-recfTlTMjZBuOducT",
+    "gpqa-diamond-recgC4GJ8wUemlUQD",
+    "gpqa-diamond-recgI6tUQ7RLJRWGx",
+    "gpqa-diamond-recgM7o1tcc7tP778",
+    "gpqa-diamond-recgXxEgllSGEpELP",
+    "gpqa-diamond-rechgQucGlrnt8KRV",
+    "gpqa-diamond-reciuppdQde4FGX1z",
+    "gpqa-diamond-reckYqR92oJkqJXkE",
+    "gpqa-diamond-recmI7EiLv72PxmYK",
+    "gpqa-diamond-recmkvk6EFAmqyMxR",
+    "gpqa-diamond-recmwwQJnx7ll7bqL",
+    "gpqa-diamond-recnjViFrqlZNL3fY",
+    "gpqa-diamond-recoiTJPGUmzAkief",
+    "gpqa-diamond-recpki12iG9RUGrz9",
+    "gpqa-diamond-recqFDvYKKRmbnoUb",
+    "gpqa-diamond-recqGD3fxPCI59vPQ",
+    "gpqa-diamond-recrs0kUo7Ua1xhKO",
+    "gpqa-diamond-rect4iLrSfUwkNTno",
+    "gpqa-diamond-recuYEkVjdVUwA3c0",
+    "gpqa-diamond-recvlnu8BuLmXZhSX",
+    "gpqa-diamond-recwW1A85nfyQpReG",
+    "gpqa-diamond-recwlwlcPvXVNPmvl",
+    "gpqa-diamond-recyPffUDqC2k7ZZO",
+    "gpqa-diamond-recyrk6XBVwugG5u8",
+    "gpqa-diamond-recywRj5a8EEjj2Ib",
+    "gpqa-diamond-reczUoM8JsxU6pYxr",
+    "gpqa-diamond-reczjcMtrB1YGS2fO",
+    "gpqa-diamond-reczzzihL7btBH7RO"
+  ],
+  "categories": [
+    {
+      "label": "Astrophysics",
+      "questions": 13
+    },
+    {
+      "label": "Condensed Matter Physics",
+      "questions": 1
+    },
+    {
+      "label": "Electromagnetism and Photonics",
+      "questions": 6
+    },
+    {
+      "label": "High-energy particle physics",
+      "questions": 14
+    },
+    {
+      "label": "Optics and Acoustics",
+      "questions": 1
+    },
+    {
+      "label": "Physics (general)",
+      "questions": 19
+    },
+    {
+      "label": "Quantum Mechanics",
+      "questions": 25
+    },
+    {
+      "label": "Relativistic Mechanics",
+      "questions": 7
+    }
+  ],
+  "failure_policy": "Exhausted generation failures count as false; missing plans and judge errors remain unknown and block plotting. No question filtering.",
+  "limitations": "Configured-system comparison; budgets are not necessarily matched. pass@k is an oracle metric. Small category counts can be unstable.",
+  "systems": {
+    "Conductor": {
+      "sources": [
+        {
+          "path": "/mnt/data/home/arjun/theo-conductor/outputs/gpqa-diamond-physics-conductor-vs-fugu-ultra-v2-20261003/conductor/results.jsonl",
+          "sha256": "fd7be9edba5d05811557fc78ef01f7d2acf0663417841aa66fcee4b039cb6513"
+        }
+      ],
+      "generation_failures": 0,
+      "overall": {
+        "mean_at_k": 0.9622093023255814,
+        "pass_at_k": 0.9767441860465116,
+        "complete_questions": 86,
+        "expected_questions": 86
+      },
+      "categories": {
+        "Astrophysics": {
+          "mean_at_k": 1,
+          "pass_at_k": 1,
+          "complete_questions": 13,
+          "expected_questions": 13
+        },
+        "Condensed Matter Physics": {
+          "mean_at_k": 1,
+          "pass_at_k": 1,
+          "complete_questions": 1,
+          "expected_questions": 1
+        },
+        "Electromagnetism and Photonics": {
+          "mean_at_k": 0.875,
+          "pass_at_k": 1,
+          "complete_questions": 6,
+          "expected_questions": 6
+        },
+        "High-energy particle physics": {
+          "mean_at_k": 0.9821428571428571,
+          "pass_at_k": 1,
+          "complete_questions": 14,
+          "expected_questions": 14
+        },
+        "Optics and Acoustics": {
+          "mean_at_k": 1,
+          "pass_at_k": 1,
+          "complete_questions": 1,
+          "expected_questions": 1
+        },
+        "Physics (general)": {
+          "mean_at_k": 0.9473684210526315,
+          "pass_at_k": 0.9473684210526315,
+          "complete_questions": 19,
+          "expected_questions": 19
+        },
+        "Quantum Mechanics": {
+          "mean_at_k": 0.99,
+          "pass_at_k": 1,
+          "complete_questions": 25,
+          "expected_questions": 25
+        },
+        "Relativistic Mechanics": {
+          "mean_at_k": 0.8571428571428571,
+          "pass_at_k": 0.8571428571428571,
+          "complete_questions": 7,
+          "expected_questions": 7
+        }
+      }
+    },
+    "Fugu Ultra v2": {
+      "sources": [
+        {
+          "path": "/mnt/data/home/arjun/theo-conductor/outputs/gpqa-diamond-physics-conductor-vs-fugu-ultra-v2-20261003/fugu/results.jsonl",
+          "sha256": "b1ec84a4e6182fdee6f74e1271f98d905569d0518a54e3af351dcb6fa426a05a"
+        }
+      ],
+      "generation_failures": 0,
+      "overall": {
+        "mean_at_k": 0.9680232558139535,
+        "pass_at_k": 0.9767441860465116,
+        "complete_questions": 86,
+        "expected_questions": 86
+      },
+      "categories": {
+        "Astrophysics": {
+          "mean_at_k": 1,
+          "pass_at_k": 1,
+          "complete_questions": 13,
+          "expected_questions": 13
+        },
+        "Condensed Matter Physics": {
+          "mean_at_k": 1,
+          "pass_at_k": 1,
+          "complete_questions": 1,
+          "expected_questions": 1
+        },
+        "Electromagnetism and Photonics": {
+          "mean_at_k": 0.875,
+          "pass_at_k": 1,
+          "complete_questions": 6,
+          "expected_questions": 6
+        },
+        "High-energy particle physics": {
+          "mean_at_k": 1,
+          "pass_at_k": 1,
+          "complete_questions": 14,
+          "expected_questions": 14
+        },
+        "Optics and Acoustics": {
+          "mean_at_k": 1,
+          "pass_at_k": 1,
+          "complete_questions": 1,
+          "expected_questions": 1
+        },
+        "Physics (general)": {
+          "mean_at_k": 0.9473684210526315,
+          "pass_at_k": 0.9473684210526315,
+          "complete_questions": 19,
+          "expected_questions": 19
+        },
+        "Quantum Mechanics": {
+          "mean_at_k": 1,
+          "pass_at_k": 1,
+          "complete_questions": 25,
+          "expected_questions": 25
+        },
+        "Relativistic Mechanics": {
+          "mean_at_k": 0.8571428571428571,
+          "pass_at_k": 0.8571428571428571,
+          "complete_questions": 7,
+          "expected_questions": 7
+        }
+      }
+    }
+  },
+  "dataset": "gpqa-d",
+  "dataset_label": "GPQA-Diamond-Physics",
+  "classification": "subdomain",
+  "metadata": {
+    "path": "/mnt/data/home/arjun/theo-conductor/outputs/.gpqa-cache/datasets--Idavidrein--gpqa/blobs/7589e3e467d69a1dceb126a60c4108d6d4f1d166",
+    "sha256": "41d1213cd7a4998605a26c2798500652572007161b3a92817ba46b35befcd305"
+  }
+}

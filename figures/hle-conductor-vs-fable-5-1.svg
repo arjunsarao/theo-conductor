@@ -1,0 +1,189 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1100" viewBox="0 0 1800 1100" role="img">
+<title>Conductor vs Fable 5.1 · HLE-Diamond-Physics</title>
+<rect width="1800" height="1100" fill="white"/>
+<g font-family="Arial, sans-serif" fill="#282d36">
+<text x="55" y="55" text-anchor="start" font-size="32" fill="#282d36" font-weight="bold">Conductor vs Fable 5.1 · HLE-Diamond-Physics</text>
+<text x="55" y="91" text-anchor="start" font-size="18" fill="#566071" font-weight="normal">61 paired questions · 4 independent samples per question</text>
+<text x="450" y="140" text-anchor="middle" font-size="26" fill="#566071" font-weight="bold">mean@4</text>
+<circle cx="450" cy="495" r="68.75" fill="none" stroke="#dbe1eb"/>
+<text x="460" y="421.25" text-anchor="start" font-size="12" fill="#8994a6" font-weight="normal">25%</text>
+<circle cx="450" cy="495" r="137.5" fill="none" stroke="#dbe1eb"/>
+<text x="460" y="352.5" text-anchor="start" font-size="12" fill="#8994a6" font-weight="normal">50%</text>
+<circle cx="450" cy="495" r="206.25" fill="none" stroke="#dbe1eb"/>
+<text x="460" y="283.75" text-anchor="start" font-size="12" fill="#8994a6" font-weight="normal">75%</text>
+<circle cx="450" cy="495" r="275" fill="none" stroke="#dbe1eb"/>
+<text x="460" y="215" text-anchor="start" font-size="12" fill="#8994a6" font-weight="normal">100%</text>
+<path d="M 450 495 L 450.0 220.0" stroke="#dbe1eb"/>
+<text x="450.0" y="163.5" text-anchor="middle" font-size="14" fill="#566071" font-weight="normal">Atomic, Molecular</text>
+<text x="450.0" y="181.5" text-anchor="middle" font-size="14" fill="#566071" font-weight="normal">&amp; Optical Physics</text>
+<text x="450.0" y="199.5" text-anchor="middle" font-size="14" fill="#566071" font-weight="normal">(n=6)</text>
+<path d="M 450 495 L 587.5 256.84301395927935" stroke="#dbe1eb"/>
+<text x="606.75" y="205.50103591357845" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Condensed Matter</text>
+<text x="606.75" y="223.50103591357845" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Physics</text>
+<text x="606.75" y="241.50103591357845" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">(n=14)</text>
+<path d="M 450 495 L 688.1569860407207 357.5" stroke="#dbe1eb"/>
+<text x="721.4989640864214" y="329.25" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Electromagnetism</text>
+<text x="721.4989640864214" y="347.25" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">(n=3)</text>
+<path d="M 450 495 L 725.0 495.0" stroke="#dbe1eb"/>
+<text x="763.5" y="477.0" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Experimental &amp;</text>
+<text x="763.5" y="495.0" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Applied Physics</text>
+<text x="763.5" y="513.0" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">(n=2)</text>
+<path d="M 450 495 L 688.1569860407207 632.5" stroke="#dbe1eb"/>
+<text x="721.4989640864216" y="633.75" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Fluid &amp; Plasma</text>
+<text x="721.4989640864216" y="651.75" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Dynamics</text>
+<text x="721.4989640864216" y="669.75" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">(n=6)</text>
+<path d="M 450 495 L 587.5 733.1569860407207" stroke="#dbe1eb"/>
+<text x="606.75" y="739.4989640864216" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Gravitation,</text>
+<text x="606.75" y="757.4989640864216" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Cosmology &amp;</text>
+<text x="606.75" y="775.4989640864216" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Astrophysics</text>
+<text x="606.75" y="793.4989640864216" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">(n=7)</text>
+<path d="M 450 495 L 450.0 770.0" stroke="#dbe1eb"/>
+<text x="450.0" y="790.5" text-anchor="middle" font-size="14" fill="#566071" font-weight="normal">High Energy &amp;</text>
+<text x="450.0" y="808.5" text-anchor="middle" font-size="14" fill="#566071" font-weight="normal">Particle Physics</text>
+<text x="450.0" y="826.5" text-anchor="middle" font-size="14" fill="#566071" font-weight="normal">(n=9)</text>
+<path d="M 450 495 L 312.50000000000006 733.1569860407207" stroke="#dbe1eb"/>
+<text x="293.25000000000006" y="748.4989640864216" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Mathematical</text>
+<text x="293.25000000000006" y="766.4989640864216" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Physics</text>
+<text x="293.25000000000006" y="784.4989640864216" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">(n=4)</text>
+<path d="M 450 495 L 211.8430139592794 632.5000000000001" stroke="#dbe1eb"/>
+<text x="178.50103591357856" y="624.7500000000001" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Nonlinear Dynamics</text>
+<text x="178.50103591357856" y="642.7500000000001" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">&amp; Classical</text>
+<text x="178.50103591357856" y="660.7500000000001" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Mechanics</text>
+<text x="178.50103591357856" y="678.7500000000001" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">(n=4)</text>
+<path d="M 450 495 L 175.0 495.00000000000006" stroke="#dbe1eb"/>
+<text x="136.5" y="486.00000000000006" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Optics &amp; Photonics</text>
+<text x="136.5" y="504.00000000000006" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">(n=2)</text>
+<path d="M 450 495 L 211.84301395927938 357.5" stroke="#dbe1eb"/>
+<text x="178.5010359135785" y="302.25" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Quantum</text>
+<text x="178.5010359135785" y="320.25" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Information,</text>
+<text x="178.5010359135785" y="338.25" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Science &amp;</text>
+<text x="178.5010359135785" y="356.25" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Technology</text>
+<text x="178.5010359135785" y="374.25" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">(n=2)</text>
+<path d="M 450 495 L 312.4999999999999 256.84301395927946" stroke="#dbe1eb"/>
+<text x="293.2499999999999" y="196.50103591357856" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Statistical</text>
+<text x="293.2499999999999" y="214.50103591357856" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Physics &amp;</text>
+<text x="293.2499999999999" y="232.50103591357856" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Thermodynamics</text>
+<text x="293.2499999999999" y="250.50103591357856" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">(n=2)</text>
+<polygon points="450.00,426.25 538.39,341.90 668.31,368.96 725.00,495.00 559.16,558.02 508.93,597.07 450.00,670.69 355.47,658.73 375.58,537.97 278.12,495.00 330.92,426.25 381.25,375.92" fill="#282d36" fill-opacity="0.10" stroke="#282d36" stroke-width="3"/>
+<circle cx="450.0" cy="426.25" r="3.5" fill="#282d36"/>
+<circle cx="538.3928571428571" cy="341.89908040239385" r="3.5" fill="#282d36"/>
+<circle cx="668.3105705373272" cy="368.95833333333337" r="3.5" fill="#282d36"/>
+<circle cx="725.0" cy="495.0" r="3.5" fill="#282d36"/>
+<circle cx="559.1552852686636" cy="558.0208333333333" r="3.5" fill="#282d36"/>
+<circle cx="508.9285714285714" cy="597.0672797317375" r="3.5" fill="#282d36"/>
+<circle cx="450.0" cy="670.6944444444445" r="3.5" fill="#282d36"/>
+<circle cx="355.46875000000006" cy="658.7329279029955" r="3.5" fill="#282d36"/>
+<circle cx="375.5759418622748" cy="537.96875" r="3.5" fill="#282d36"/>
+<circle cx="278.125" cy="495.0" r="3.5" fill="#282d36"/>
+<circle cx="330.9215069796397" cy="426.25" r="3.5" fill="#282d36"/>
+<circle cx="381.24999999999994" cy="375.92150697963973" r="3.5" fill="#282d36"/>
+<text x="450" y="907" text-anchor="middle" font-size="18" fill="#282d36" font-weight="bold">Conductor: 55.7%</text>
+<polygon points="450.00,403.33 521.21,371.67 668.31,368.96 587.50,495.00 569.08,563.75 523.66,622.58 450.00,663.06 338.28,688.50 316.04,572.34 175.00,495.00 241.61,374.69 381.25,375.92" fill="#ca603b" fill-opacity="0.10" stroke="#ca603b" stroke-width="3" stroke-dasharray="9 5"/>
+<circle cx="450.0" cy="403.33333333333337" r="3.5" fill="#ca603b"/>
+<circle cx="521.2053571428571" cy="371.66870365748395" r="3.5" fill="#ca603b"/>
+<circle cx="668.3105705373272" cy="368.95833333333337" r="3.5" fill="#ca603b"/>
+<circle cx="587.5" cy="495.0" r="3.5" fill="#ca603b"/>
+<circle cx="569.0784930203604" cy="563.75" r="3.5" fill="#ca603b"/>
+<circle cx="523.6607142857142" cy="622.5840996646717" r="3.5" fill="#ca603b"/>
+<circle cx="450.0" cy="663.0555555555555" r="3.5" fill="#ca603b"/>
+<circle cx="338.28125000000006" cy="688.5025511580855" r="3.5" fill="#ca603b"/>
+<circle cx="316.0366953520947" cy="572.34375" r="3.5" fill="#ca603b"/>
+<circle cx="175.0" cy="495.00000000000006" r="3.5" fill="#ca603b"/>
+<circle cx="241.61263721436947" cy="374.6875" r="3.5" fill="#ca603b"/>
+<circle cx="381.24999999999994" cy="375.92150697963973" r="3.5" fill="#ca603b"/>
+<text x="450" y="939" text-anchor="middle" font-size="18" fill="#ca603b" font-weight="bold">Fable 5.1: 58.2%</text>
+<text x="450" y="875" text-anchor="middle" font-size="15" fill="#566071" font-weight="normal">Overall</text>
+<text x="1350" y="140" text-anchor="middle" font-size="26" fill="#566071" font-weight="bold">pass@4</text>
+<circle cx="1350" cy="495" r="68.75" fill="none" stroke="#dbe1eb"/>
+<text x="1360" y="421.25" text-anchor="start" font-size="12" fill="#8994a6" font-weight="normal">25%</text>
+<circle cx="1350" cy="495" r="137.5" fill="none" stroke="#dbe1eb"/>
+<text x="1360" y="352.5" text-anchor="start" font-size="12" fill="#8994a6" font-weight="normal">50%</text>
+<circle cx="1350" cy="495" r="206.25" fill="none" stroke="#dbe1eb"/>
+<text x="1360" y="283.75" text-anchor="start" font-size="12" fill="#8994a6" font-weight="normal">75%</text>
+<circle cx="1350" cy="495" r="275" fill="none" stroke="#dbe1eb"/>
+<text x="1360" y="215" text-anchor="start" font-size="12" fill="#8994a6" font-weight="normal">100%</text>
+<path d="M 1350 495 L 1350.0 220.0" stroke="#dbe1eb"/>
+<text x="1350.0" y="163.5" text-anchor="middle" font-size="14" fill="#566071" font-weight="normal">Atomic, Molecular</text>
+<text x="1350.0" y="181.5" text-anchor="middle" font-size="14" fill="#566071" font-weight="normal">&amp; Optical Physics</text>
+<text x="1350.0" y="199.5" text-anchor="middle" font-size="14" fill="#566071" font-weight="normal">(n=6)</text>
+<path d="M 1350 495 L 1487.5 256.84301395927935" stroke="#dbe1eb"/>
+<text x="1506.75" y="205.50103591357845" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Condensed Matter</text>
+<text x="1506.75" y="223.50103591357845" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Physics</text>
+<text x="1506.75" y="241.50103591357845" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">(n=14)</text>
+<path d="M 1350 495 L 1588.1569860407205 357.5" stroke="#dbe1eb"/>
+<text x="1621.4989640864214" y="329.25" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Electromagnetism</text>
+<text x="1621.4989640864214" y="347.25" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">(n=3)</text>
+<path d="M 1350 495 L 1625.0 495.0" stroke="#dbe1eb"/>
+<text x="1663.5" y="477.0" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Experimental &amp;</text>
+<text x="1663.5" y="495.0" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Applied Physics</text>
+<text x="1663.5" y="513.0" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">(n=2)</text>
+<path d="M 1350 495 L 1588.1569860407208 632.5" stroke="#dbe1eb"/>
+<text x="1621.4989640864214" y="633.75" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Fluid &amp; Plasma</text>
+<text x="1621.4989640864214" y="651.75" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Dynamics</text>
+<text x="1621.4989640864214" y="669.75" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">(n=6)</text>
+<path d="M 1350 495 L 1487.5 733.1569860407207" stroke="#dbe1eb"/>
+<text x="1506.75" y="739.4989640864216" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Gravitation,</text>
+<text x="1506.75" y="757.4989640864216" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Cosmology &amp;</text>
+<text x="1506.75" y="775.4989640864216" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">Astrophysics</text>
+<text x="1506.75" y="793.4989640864216" text-anchor="start" font-size="14" fill="#566071" font-weight="normal">(n=7)</text>
+<path d="M 1350 495 L 1350.0 770.0" stroke="#dbe1eb"/>
+<text x="1350.0" y="790.5" text-anchor="middle" font-size="14" fill="#566071" font-weight="normal">High Energy &amp;</text>
+<text x="1350.0" y="808.5" text-anchor="middle" font-size="14" fill="#566071" font-weight="normal">Particle Physics</text>
+<text x="1350.0" y="826.5" text-anchor="middle" font-size="14" fill="#566071" font-weight="normal">(n=9)</text>
+<path d="M 1350 495 L 1212.5 733.1569860407207" stroke="#dbe1eb"/>
+<text x="1193.25" y="748.4989640864216" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Mathematical</text>
+<text x="1193.25" y="766.4989640864216" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Physics</text>
+<text x="1193.25" y="784.4989640864216" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">(n=4)</text>
+<path d="M 1350 495 L 1111.8430139592795 632.5000000000001" stroke="#dbe1eb"/>
+<text x="1078.5010359135786" y="624.7500000000001" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Nonlinear Dynamics</text>
+<text x="1078.5010359135786" y="642.7500000000001" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">&amp; Classical</text>
+<text x="1078.5010359135786" y="660.7500000000001" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Mechanics</text>
+<text x="1078.5010359135786" y="678.7500000000001" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">(n=4)</text>
+<path d="M 1350 495 L 1075.0 495.00000000000006" stroke="#dbe1eb"/>
+<text x="1036.5" y="486.00000000000006" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Optics &amp; Photonics</text>
+<text x="1036.5" y="504.00000000000006" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">(n=2)</text>
+<path d="M 1350 495 L 1111.8430139592795 357.5" stroke="#dbe1eb"/>
+<text x="1078.5010359135786" y="302.25" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Quantum</text>
+<text x="1078.5010359135786" y="320.25" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Information,</text>
+<text x="1078.5010359135786" y="338.25" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Science &amp;</text>
+<text x="1078.5010359135786" y="356.25" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Technology</text>
+<text x="1078.5010359135786" y="374.25" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">(n=2)</text>
+<path d="M 1350 495 L 1212.5 256.84301395927946" stroke="#dbe1eb"/>
+<text x="1193.2499999999998" y="196.50103591357856" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Statistical</text>
+<text x="1193.2499999999998" y="214.50103591357856" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Physics &amp;</text>
+<text x="1193.2499999999998" y="232.50103591357856" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">Thermodynamics</text>
+<text x="1193.2499999999998" y="250.50103591357856" text-anchor="end" font-size="14" fill="#566071" font-weight="normal">(n=2)</text>
+<polygon points="1350.00,311.67 1458.04,307.88 1588.16,357.50 1625.00,495.00 1508.77,586.67 1448.21,665.11 1350.00,708.89 1212.50,733.16 1171.38,598.13 1075.00,495.00 1230.92,426.25 1212.50,256.84" fill="#282d36" fill-opacity="0.10" stroke="#282d36" stroke-width="3"/>
+<circle cx="1350.0" cy="311.6666666666667" r="3.5" fill="#282d36"/>
+<circle cx="1458.0357142857142" cy="307.8766538251481" r="3.5" fill="#282d36"/>
+<circle cx="1588.1569860407205" cy="357.5" r="3.5" fill="#282d36"/>
+<circle cx="1625.0" cy="495.0" r="3.5" fill="#282d36"/>
+<circle cx="1508.771324027147" cy="586.6666666666666" r="3.5" fill="#282d36"/>
+<circle cx="1448.2142857142858" cy="665.112132886229" r="3.5" fill="#282d36"/>
+<circle cx="1350.0" cy="708.8888888888889" r="3.5" fill="#282d36"/>
+<circle cx="1212.5" cy="733.1569860407207" r="3.5" fill="#282d36"/>
+<circle cx="1171.3822604694597" cy="598.1250000000001" r="3.5" fill="#282d36"/>
+<circle cx="1075.0" cy="495.00000000000006" r="3.5" fill="#282d36"/>
+<circle cx="1230.9215069796396" cy="426.25" r="3.5" fill="#282d36"/>
+<circle cx="1212.5" cy="256.84301395927946" r="3.5" fill="#282d36"/>
+<text x="1350" y="907" text-anchor="middle" font-size="18" fill="#282d36" font-weight="bold">Conductor: 78.7%</text>
+<polygon points="1350.00,357.50 1438.39,341.90 1588.16,357.50 1487.50,495.00 1508.77,586.67 1467.86,699.13 1350.00,708.89 1212.50,733.16 1171.38,598.13 1075.00,495.00 1111.84,357.50 1281.25,375.92" fill="#ca603b" fill-opacity="0.10" stroke="#ca603b" stroke-width="3" stroke-dasharray="9 5"/>
+<circle cx="1350.0" cy="357.5" r="3.5" fill="#ca603b"/>
+<circle cx="1438.392857142857" cy="341.89908040239385" r="3.5" fill="#ca603b"/>
+<circle cx="1588.1569860407205" cy="357.5" r="3.5" fill="#ca603b"/>
+<circle cx="1487.5" cy="495.0" r="3.5" fill="#ca603b"/>
+<circle cx="1508.771324027147" cy="586.6666666666666" r="3.5" fill="#ca603b"/>
+<circle cx="1467.857142857143" cy="699.1345594634748" r="3.5" fill="#ca603b"/>
+<circle cx="1350.0" cy="708.8888888888889" r="3.5" fill="#ca603b"/>
+<circle cx="1212.5" cy="733.1569860407207" r="3.5" fill="#ca603b"/>
+<circle cx="1171.3822604694597" cy="598.1250000000001" r="3.5" fill="#ca603b"/>
+<circle cx="1075.0" cy="495.00000000000006" r="3.5" fill="#ca603b"/>
+<circle cx="1111.8430139592795" cy="357.5" r="3.5" fill="#ca603b"/>
+<circle cx="1281.25" cy="375.92150697963973" r="3.5" fill="#ca603b"/>
+<text x="1350" y="939" text-anchor="middle" font-size="18" fill="#ca603b" font-weight="bold">Fable 5.1: 73.8%</text>
+<text x="1350" y="875" text-anchor="middle" font-size="15" fill="#566071" font-weight="normal">Overall</text>
+<text x="900" y="1000" text-anchor="middle" font-size="16" fill="#566071" font-weight="normal">mean@4: average sample accuracy. pass@4: probability of at least one correct answer in k samples.</text>
+<text x="900" y="1028" text-anchor="middle" font-size="14" fill="#566071" font-weight="normal">Shared 0–100% scale; paired question cohort; category counts denote unique questions.</text>
+<text x="900" y="1055" text-anchor="middle" font-size="14" fill="#566071" font-weight="normal">Generation failures count as unsuccessful samples. Small category counts can be unstable.</text>
+</g>
+</svg>
