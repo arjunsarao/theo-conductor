@@ -1,0 +1,197 @@
+{
+  "k": 4,
+  "samples": 4,
+  "questions": 70,
+  "question_ids": [
+    "frontierscience-olympiad-0ea11f5b-df09-4330-92cc-302a63c22008-1",
+    "frontierscience-olympiad-11c1fcc0-bcad-4507-951b-550e19f1e2aa-25",
+    "frontierscience-olympiad-16318af5-cfa6-4b2c-bf25-9eb3ac468b48-16",
+    "frontierscience-olympiad-19962a30-eaf9-4b7e-86c7-17c02cdb01bd-41",
+    "frontierscience-olympiad-1dba0086-bca8-4b25-8843-e6e428f9284d-33",
+    "frontierscience-olympiad-1e2f4cbe-4a38-4dd3-9378-14df40f7599f-20",
+    "frontierscience-olympiad-20daab54-df1b-4006-a544-7198daee7847-48",
+    "frontierscience-olympiad-20fcf049-b356-45cf-83d8-833f280ee107-18",
+    "frontierscience-olympiad-218df0c2-18db-495f-8c53-eb6758feaff2-31",
+    "frontierscience-olympiad-239c543b-7543-445a-b492-89c994b9ba7c-26",
+    "frontierscience-olympiad-27c865e6-1c87-489b-b7ea-b197fe3356ba-0",
+    "frontierscience-olympiad-2c46387b-36e6-43cb-9e73-dbf1341bfafd-45",
+    "frontierscience-olympiad-328c6a47-15d7-470e-99f5-73e468634614-37",
+    "frontierscience-olympiad-3a998a27-4c4b-47c6-bd2c-dd1c9deb3d63-36",
+    "frontierscience-olympiad-4195adea-9fa5-4f25-91ef-ebd6c57cfb88-13",
+    "frontierscience-olympiad-422512ca-5a0c-4a23-b987-7fa2eb2024e6-22",
+    "frontierscience-olympiad-4225f097-0cee-4e43-b5b9-6efbab4c3447-43",
+    "frontierscience-olympiad-4f1cf869-3ea3-400c-8fa3-e4d3f6fe1cdf-46",
+    "frontierscience-olympiad-516da073-8d2a-4db5-a739-c752655ec14c-3",
+    "frontierscience-olympiad-5c97845c-c039-48d8-abcf-703afc476b98-27",
+    "frontierscience-olympiad-62dc1c65-0200-41d8-91fd-aa3c606e46cc-7",
+    "frontierscience-olympiad-6646019d-bda1-4b1c-83ac-7953e853effd-39",
+    "frontierscience-olympiad-69bd11e8-5f96-45dc-8123-b9d800101430-21",
+    "frontierscience-olympiad-6e9aca19-46c4-46ea-9643-86b138e8f2f5-30",
+    "frontierscience-olympiad-70929247-a356-4a12-8534-49fd885f0c3e-42",
+    "frontierscience-olympiad-710c1336-0995-4d45-bfea-48ff475f255f-19",
+    "frontierscience-olympiad-84bba88d-2aee-4fcb-baab-4c6eea17b0d8-34",
+    "frontierscience-olympiad-8a983c4c-070e-45b1-b2ce-300c7a68feb6-47",
+    "frontierscience-olympiad-94c55a69-1e8d-4934-ae59-2cf0401e1b01-4",
+    "frontierscience-olympiad-953ba4b1-94ae-42ac-9621-408386bc382b-23",
+    "frontierscience-olympiad-ae667a28-9659-4f33-a51e-7a19f133e111-44",
+    "frontierscience-olympiad-aeaa8d2c-fcb9-423f-b1c0-ac9c122999e6-49",
+    "frontierscience-olympiad-afb2ebc7-421e-4e61-8073-7c4393aa9855-12",
+    "frontierscience-olympiad-b90fc8dc-2fca-4ff7-9c9f-a2e6a0ac7812-5",
+    "frontierscience-olympiad-bb0539ef-d9fd-4215-bf16-b0eca44a8778-2",
+    "frontierscience-olympiad-bc8a05ac-9db5-47b4-8618-84aa4a46466a-17",
+    "frontierscience-olympiad-bdb3fc5f-9374-4e37-9af9-6036e3e29093-40",
+    "frontierscience-olympiad-cb11faa6-e12a-4621-9fa7-f6f4b11a9300-6",
+    "frontierscience-olympiad-cfa05761-b488-4491-9f77-8854ece1cf98-35",
+    "frontierscience-olympiad-d1cec1fb-13bb-475a-b2f1-956db5ef3b77-24",
+    "frontierscience-olympiad-dbe975d5-c431-4d73-8f7c-f8bba77ea458-10",
+    "frontierscience-olympiad-dcc38501-c38e-4a8e-a069-1a401d6432c0-38",
+    "frontierscience-olympiad-e1b0b588-915d-46ad-990e-ba5aa554053e-15",
+    "frontierscience-olympiad-e2bef5ee-c2ee-4704-b52a-63bb2e7aea7a-14",
+    "frontierscience-olympiad-f10254b9-f0a1-407f-8af9-3169e23eee5e-9",
+    "frontierscience-olympiad-f398c3ad-6cff-45b1-a21d-5ce963db75aa-8",
+    "frontierscience-olympiad-f3ba1aae-2fc3-4d9b-a5a3-42bb91de4d7d-28",
+    "frontierscience-olympiad-f4681d73-b08d-450c-89d3-85b9d1250419-11",
+    "frontierscience-olympiad-f88cc0c0-2ca6-4cb0-bd1e-a37ddcf11294-29",
+    "frontierscience-olympiad-f9fdb988-7a10-4510-a8ab-d011e663be3f-32",
+    "frontierscience-research-07fd78cd-81de-4a62-9952-369093ec303f-8",
+    "frontierscience-research-1a5d24e0-9af4-4b36-98d1-2845df696d90-3",
+    "frontierscience-research-1c77dfab-266d-40d4-b3a0-2c27f0b32139-7",
+    "frontierscience-research-222e24bf-14d4-4660-a5dd-01b2b3528cfa-0",
+    "frontierscience-research-2db1b6e6-c019-4ce3-9b53-2292f7b2c38c-13",
+    "frontierscience-research-3182a1e3-e9ad-4d4b-8ef8-de88a9f811b8-16",
+    "frontierscience-research-3f380f88-7221-4320-a168-348d9a77db2e-18",
+    "frontierscience-research-60ff38cc-fb55-4c3c-b75c-f59dde5de0c3-14",
+    "frontierscience-research-70c1246f-0a17-4f59-84a2-3699aa395d4d-15",
+    "frontierscience-research-790baca4-d2d8-4acb-8494-91adf77e026b-4",
+    "frontierscience-research-7fbca2d0-9e5c-48f8-953c-acab7e25598c-17",
+    "frontierscience-research-8fac71ae-1f4a-4edd-9f0d-88a443912a04-5",
+    "frontierscience-research-9557097c-9285-46d9-b1fc-51a256d87913-19",
+    "frontierscience-research-af50243e-3a60-4460-9536-f9a02c4f8eb8-11",
+    "frontierscience-research-af50243e-3a60-4460-9536-f9a02c4f8eb8-6",
+    "frontierscience-research-bc82c611-4407-4da9-8444-48dbf08d0bbf-2",
+    "frontierscience-research-bf7d23f3-0cf6-4d36-868f-1e3a89f688ea-10",
+    "frontierscience-research-d3acd2cb-8477-4630-b8bb-b4bc22670dc8-1",
+    "frontierscience-research-d50f3722-14fb-485a-a417-ed6ae79f3c07-9",
+    "frontierscience-research-e5e3780b-d0a6-4a42-b468-2b196bfe4663-12"
+  ],
+  "categories": [
+    {
+      "label": "Olympiad",
+      "questions": 50
+    },
+    {
+      "label": "Research",
+      "questions": 20
+    }
+  ],
+  "failure_policy": "Exhausted generation failures count as false; missing plans and judge errors remain unknown and block plotting. No question filtering.",
+  "limitations": "Configured-system comparison; budgets are not necessarily matched. pass@k is an oracle metric. Small category counts can be unstable. Original source rows are retained, including repeated question texts.",
+  "systems": {
+    "Conductor": {
+      "sources": [
+        {
+          "path": "/mnt/data/home/arjun/theo-conductor/outputs/frontierscience-physics-fugu-vs-conductor-m4-20261003/conductor/results.jsonl",
+          "sha256": "7f3fe2430cf35b803172e52954cabf4041488f196971783c075944633bc6f3c7"
+        }
+      ],
+      "generation_failures": 3,
+      "overall": {
+        "mean_at_k": 0.775,
+        "pass_at_k": 0.8857142857142857,
+        "complete_questions": 70,
+        "expected_questions": 70
+      },
+      "categories": {
+        "Olympiad": {
+          "mean_at_k": 0.85,
+          "pass_at_k": 0.96,
+          "complete_questions": 50,
+          "expected_questions": 50
+        },
+        "Research": {
+          "mean_at_k": 0.5875,
+          "pass_at_k": 0.7,
+          "complete_questions": 20,
+          "expected_questions": 20
+        }
+      }
+    },
+    "Fugu Ultra v2": {
+      "sources": [
+        {
+          "path": "/mnt/data/home/arjun/theo-conductor/outputs/frontierscience-physics-fugu-vs-conductor-m4-20261003/fugu/results.jsonl",
+          "sha256": "3fcc49a493309a40e8be43c363ccc13361413cd087a034deb7b525847e343043"
+        }
+      ],
+      "generation_failures": 0,
+      "overall": {
+        "mean_at_k": 0.8107142857142857,
+        "pass_at_k": 0.8857142857142857,
+        "complete_questions": 70,
+        "expected_questions": 70
+      },
+      "categories": {
+        "Olympiad": {
+          "mean_at_k": 0.87,
+          "pass_at_k": 0.92,
+          "complete_questions": 50,
+          "expected_questions": 50
+        },
+        "Research": {
+          "mean_at_k": 0.6625,
+          "pass_at_k": 0.8,
+          "complete_questions": 20,
+          "expected_questions": 20
+        }
+      }
+    }
+  },
+  "dataset_label": "FrontierScience-physics",
+  "metadata": {
+    "path": "/mnt/data/home/arjun/theo-conductor/outputs/frontierscience-physics-fugu-vs-conductor-m4-20261003/questions.jsonl",
+    "sha256": "215131609ed726fd8cf56776aad402558ea797549ec5673707345656ffdffd84"
+  },
+  "duplicate_question_groups": [
+    [
+      "frontierscience-research-af50243e-3a60-4460-9536-f9a02c4f8eb8-6",
+      "frontierscience-research-af50243e-3a60-4460-9536-f9a02c4f8eb8-11"
+    ]
+  ],
+  "comparison_manifest": {
+    "path": "/mnt/data/home/arjun/theo-conductor/outputs/frontierscience-physics-fugu-vs-conductor-m4-20261003/comparison-manifest.json",
+    "sha256": "cc7933216c2a6476a8a4725a77646614c6767ae448552a977455fda6472b00f2",
+    "settings": {
+      "dataset": "openai/frontierscience",
+      "selector": "frontierscience-physics",
+      "revision": "25ed67db7da8f4591484e764008ff585544f5a30",
+      "physics_questions": 70,
+      "track_counts": {
+        "olympiad": 50,
+        "research": 20
+      },
+      "distinct_question_texts": 69,
+      "duplicate_question_groups": [
+        [
+          "frontierscience-research-af50243e-3a60-4460-9536-f9a02c4f8eb8-6",
+          "frontierscience-research-af50243e-3a60-4460-9536-f9a02c4f8eb8-11"
+        ]
+      ],
+      "samples": 4,
+      "expected_slots_per_arm": 280,
+      "planner": "gpt-6.1-sol",
+      "judge": "gemini-3.7-flash",
+      "solver": "fugu-ultra-v2",
+      "temperature": 0.2,
+      "plan_temperature": 0.1,
+      "plan_max_tokens": 8192,
+      "judge_max_tokens": 8192,
+      "recovery_attempts_per_slot": 3,
+      "concurrency_per_arm": 4,
+      "output_limits": "Per-model max_output_tokens from frozen registries",
+      "failure_policy": "Exhausted solver/workflow failures count false; planner/judge errors stay unknown",
+      "grading": "Olympiad semantic short answer; Research rubric10 with score >= 7 correct",
+      "duplicate_policy": "Retain every original source row; disclose duplicates in reported comparisons",
+      "code_revision": "bcab70dae72646bc4f1fb3381275628e5df7a6a1"
+    }
+  }
+}

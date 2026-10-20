@@ -65,7 +65,7 @@ models:
     context_length: 1048576
     output_budget_observed_tokens: 53000
     # OpenRouter advertised max_completion_tokens (2026-10-02).
-    max_output_tokens: 131072
+    max_output_tokens: 943718
     supports_tools: true
     supports_json: true
     cost_per_1m_input_tokens: 1.4

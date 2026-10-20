@@ -87,6 +87,7 @@ class ModelResponse:
     finish_reason: str | None = None
     tool_calls: tuple[ToolCall, ...] = ()
     conversation: List[Dict[str, Any]] | None = None
+    server_tool_calls: tuple[ToolCallRecord, ...] = ()
 
 
 class ModelClient(Protocol):

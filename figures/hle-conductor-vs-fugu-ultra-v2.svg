@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1100" viewBox="0 0 1800 1100" role="img">
-<title>Conductor vs Fugu Ultra v2 · HLE-Diamond-Physics</title>
+<title>Conductor vs Fugu Ultra v2 (xhigh) · HLE-Diamond-Physics</title>
 <rect width="1800" height="1100" fill="white"/>
 <g font-family="Arial, sans-serif" fill="#282d36">
-<text x="55" y="55" text-anchor="start" font-size="32" fill="#282d36" font-weight="bold">Conductor vs Fugu Ultra v2 · HLE-Diamond-Physics</text>
+<text x="55" y="55" text-anchor="start" font-size="32" fill="#282d36" font-weight="bold">Conductor vs Fugu Ultra v2 (xhigh) · HLE-Diamond-Physics</text>
 <text x="55" y="91" text-anchor="start" font-size="18" fill="#566071" font-weight="normal">61 paired questions · 4 independent samples per question</text>
 <text x="450" y="140" text-anchor="middle" font-size="26" fill="#566071" font-weight="bold">mean@4</text>
 <circle cx="450" cy="495" r="68.75" fill="none" stroke="#dbe1eb"/>
@@ -91,7 +91,7 @@
 <circle cx="175.0" cy="495.00000000000006" r="3.5" fill="#e10600"/>
 <circle cx="360.69113023472977" cy="443.4375" r="3.5" fill="#e10600"/>
 <circle cx="329.6874999999999" cy="286.61263721436956" r="3.5" fill="#e10600"/>
-<text x="450" y="939" text-anchor="middle" font-size="18" fill="#e10600" font-weight="bold">Fugu Ultra v2: 50.0%</text>
+<text x="450" y="939" text-anchor="middle" font-size="18" fill="#e10600" font-weight="bold">Fugu Ultra v2 (xhigh): 50.0%</text>
 <text x="450" y="875" text-anchor="middle" font-size="15" fill="#566071" font-weight="normal">Overall</text>
 <text x="1350" y="140" text-anchor="middle" font-size="26" fill="#566071" font-weight="bold">pass@4</text>
 <circle cx="1350" cy="495" r="68.75" fill="none" stroke="#dbe1eb"/>
@@ -180,7 +180,7 @@
 <circle cx="1075.0" cy="495.00000000000006" r="3.5" fill="#e10600"/>
 <circle cx="1230.9215069796396" cy="426.25" r="3.5" fill="#e10600"/>
 <circle cx="1212.5" cy="256.84301395927946" r="3.5" fill="#e10600"/>
-<text x="1350" y="939" text-anchor="middle" font-size="18" fill="#e10600" font-weight="bold">Fugu Ultra v2: 63.9%</text>
+<text x="1350" y="939" text-anchor="middle" font-size="18" fill="#e10600" font-weight="bold">Fugu Ultra v2 (xhigh): 63.9%</text>
 <text x="1350" y="875" text-anchor="middle" font-size="15" fill="#566071" font-weight="normal">Overall</text>
 <text x="900" y="1000" text-anchor="middle" font-size="16" fill="#566071" font-weight="normal">mean@4: average sample accuracy. pass@4: probability of at least one correct answer in k samples.</text>
 <text x="900" y="1028" text-anchor="middle" font-size="14" fill="#566071" font-weight="normal">Shared 0–100% scale; paired question cohort; category counts denote unique questions.</text>

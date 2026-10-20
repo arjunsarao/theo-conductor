@@ -103,7 +103,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--ask-user-for-clarification",
         action="store_true",
-        help="Ask the user for worker clarifications instead of GPT-6 Astra (default: off).",
+        help="Ask the user for worker clarifications instead of the active conductor (default: off).",
     )
     parser.add_argument("--quiet", action="store_true", help="Print only the answer.")
     parser.add_argument("--no-color", action="store_true", help="Disable ANSI colors.")
@@ -119,6 +119,8 @@ def load_task(path: Path) -> Task:
 
 
 async def create_task(question: str, registry: ModelRegistry, conductor_model: str | None) -> Task:
+    if conductor_model is None:
+        conductor_model = registry.conductor_model
     if conductor_model is None:
         try:
             conductor_model = next(iter(registry._models))
@@ -149,11 +151,13 @@ async def async_main(argv: Sequence[str] | None = None) -> RunResult:
     just_fix_windows_console()
     console = CliConsole(color=not args.no_color, quiet=args.quiet or args.json)
     registry = ModelRegistry.from_config_dir(args.config_dir)
+    conductor_model = args.conductor_model or registry.conductor_model
 
     if args.question is not None:
-        model_id = args.conductor_model or next(iter(registry._models), None)
+        model_id = conductor_model or next(iter(registry._models), None)
         console.log("◆", f"Planning workflow with {model_id}")
-        task = await create_task(args.question, registry, args.conductor_model)
+        conductor_model = model_id
+        task = await create_task(args.question, registry, conductor_model)
         console.log("✓", f"Created a {task.difficulty.value} {task.task_type} workflow", color="green")
     else:
         task = load_task(args.task)
@@ -166,6 +170,7 @@ async def async_main(argv: Sequence[str] | None = None) -> RunResult:
         model_registry=registry,
         event_handler=console.step_event,
         ask_user_for_clarification=args.ask_user_for_clarification,
+        conductor_model=conductor_model,
     ).run(task)
     elapsed = time.perf_counter() - started
 

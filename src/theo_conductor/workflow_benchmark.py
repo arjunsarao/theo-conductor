@@ -317,6 +317,7 @@ async def run_workflow_benchmark(
             })
             runner = Runner(
                 model_registry=registry,
+                conductor_model=plan_record.get("planner_model_id") or plan_record.get("conductor_model"),
                 max_worker_tokens=max_worker_tokens,
                 use_model_output_limits=use_model_output_limits,
                 worker_temperature=worker_temperature,
@@ -473,6 +474,7 @@ async def _run_batched_workflow_benchmark(
                 layers=topological_sort(task),
                 runner=Runner(
                     model_registry=registry,
+                    conductor_model=plan_record.get("planner_model_id") or plan_record.get("conductor_model"),
                     max_worker_tokens=max_worker_tokens,
                     use_model_output_limits=use_model_output_limits,
                     worker_temperature=worker_temperature,

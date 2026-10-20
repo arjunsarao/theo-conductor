@@ -308,3 +308,119 @@ def test_configured_conductor_handles_workflow_clarifications():
     registry = ModelRegistry([ModelSpec(model_idx='planner', client=Client())], conductor_model='planner')
     tool = default_tool_registry(registry)._tools['request_clarification']
     assert tool.handler._model()[0] == 'planner'
+
+
+def test_workflow_runner_uses_actual_planner_override(tmp_path, monkeypatch):
+    from theo_conductor.runner import Runner
+    client, registry, config, source, prompt = setup(tmp_path)
+    registry.conductor_model = 'worker'
+    conductors = []
+    class TrackingRunner(Runner):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            conductors.append(self.conductor_model)
+            assert self.tool_registry._tools['request_clarification'].handler._model()[0] == 'planner'
+    monkeypatch.setattr('theo_conductor.evaluate.Runner', TrackingRunner)
+    args = options(tmp_path, 'workflows', config, source, prompt)
+    asyncio.run(run(args, registry))
+    assert conductors == ['planner']
+
+
+def test_retry_failed_skips_completed_before_any_cache_or_planner_checks(tmp_path):
+    client, registry, config, source, prompt = setup(tmp_path)
+    source.write_text('\n'.join(json.dumps({'id': q, 'question': q, 'answer': '4'})
+                                for q in ('good', 'bad')) + '\n')
+    original = client.generate
+    failing = True
+
+    async def generate(instruction, **kwargs):
+        if failing and kwargs.get('question') == 'bad' and instruction.startswith('second'):
+            raise RuntimeError('recoverable')
+        return await original(instruction, **kwargs)
+
+    client.generate = generate
+    args = options(tmp_path, 'workflows', config, source, prompt)
+    asyncio.run(run(args, registry))
+    completed = next(r for r in results(tmp_path) if r['example_id'] == 'good')
+    calls = client.calls.copy()
+    # A changed prompt would normally invalidate even a completed slot.
+    prompt.write_text(prompt.read_text() + '\nNew planning instruction.')
+    args.retry_failed = True
+    failing = False
+    asyncio.run(run(args, registry))
+    after = next(r for r in results(tmp_path) if r['example_id'] == 'good')
+    assert after['attempt_history'] == completed['attempt_history']
+    assert after['response'] == completed['response']
+    assert after['worker_outputs'] == completed['worker_outputs']
+    assert client.calls['planner'] == calls['planner'] + 1
+    assert all(r['status'] == 'completed' for r in results(tmp_path))
+
+
+def test_hard_request_deadline_retries_only_failed_step_and_retains_ancestor(tmp_path):
+    client, registry, config, source, prompt = setup(tmp_path)
+    original = client.generate
+
+    async def generate(instruction, **kwargs):
+        if instruction.startswith('second'):
+            client.calls['blocked'] += 1
+            # Ongoing activity must not reset the hard elapsed deadline.
+            while True:
+                await asyncio.sleep(.001)
+        return await original(instruction, **kwargs)
+
+    client.generate = generate
+    args = options(tmp_path, 'workflows', config, source, prompt,
+                   ['--request-timeout-seconds', '.02', '--attempts', '2'])
+    asyncio.run(asyncio.wait_for(run(args, registry), timeout=2))
+    row = results(tmp_path)[0]
+    assert row['status'] == 'failed' and row['failed_steps']['b']['reason'] == 'TimeoutError'
+    assert client.calls['blocked'] == 2 and client.calls['first'] == 1
+    assert 'a' in row['worker_outputs'] and not row['in_flight_requests']
+    failed = [a for a in row['attempt_history'] if a.get('failure_reason') == 'TimeoutError']
+    assert len(failed) == 2 and all(a['usage'] is None for a in failed)
+
+
+def test_workflow_deadline_cancels_pending_request_and_remains_resumable(tmp_path):
+    client, registry, config, source, prompt = setup(tmp_path)
+    original = client.generate
+
+    async def generate(instruction, **kwargs):
+        if instruction.startswith('second'):
+            await asyncio.sleep(60)
+        return await original(instruction, **kwargs)
+
+    client.generate = generate
+    args = options(tmp_path, 'workflows', config, source, prompt,
+                   ['--workflow-timeout-seconds', '.03', '--attempts', '3'])
+    asyncio.run(asyncio.wait_for(run(args, registry), timeout=2))
+    row = results(tmp_path)[0]
+    assert row['status'] == 'failed' and row['error'].startswith('TimeoutError')
+    assert not row['in_flight_requests'] and 'a' in row['worker_outputs']
+    assert any(a.get('failure_reason') == 'workflow_timeout' and a['usage'] is None
+               for a in row['attempt_history'])
+    client.generate = original
+    args.retry_failed = True
+    args.workflow_timeout_seconds = 2
+    asyncio.run(run(args, registry))
+    assert results(tmp_path)[0]['status'] == 'completed'
+    assert client.calls['first'] == 1
+
+
+def test_judge_deadline_keeps_successful_generation(tmp_path):
+    client, registry, config, source, prompt = setup(tmp_path)
+    original = client.generate
+    asyncio.run(run(options(tmp_path, 'workflows', config, source, prompt), registry))
+
+    async def generate(instruction, **kwargs):
+        if kwargs.get('response_format', {}).get('json_schema', {}).get('name') != 'conductor_workflow' and kwargs.get('response_format'):
+            await asyncio.sleep(60)
+        return await original(instruction, **kwargs)
+
+    client.generate = generate
+    args = options(tmp_path, 'judge', config, source, prompt,
+                   ['--workflow-timeout-seconds', '.03', '--judge-model', 'judge'])
+    asyncio.run(asyncio.wait_for(run(args, registry), timeout=2))
+    row = results(tmp_path)[0]
+    assert row['status'] == 'completed' and row['response']
+    assert row['judge_correct'] is None and 'TimeoutError' in row['judge_error']
+    assert not row['in_flight_requests']

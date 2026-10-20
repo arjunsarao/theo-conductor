@@ -1,0 +1,319 @@
+{
+  "k": 4,
+  "samples": 4,
+  "questions": 61,
+  "question_ids": [
+    "hle-diamond-66e89ebe7361982cbfbc5952",
+    "hle-diamond-66e94a88b78e263c565b17ee",
+    "hle-diamond-66ebdd180b3bc8785f19e9c0",
+    "hle-diamond-66ec07be2ec65d6153428751",
+    "hle-diamond-66ec2799da20d530acf3bf1e",
+    "hle-diamond-66ec877286c7331c303480f5",
+    "hle-diamond-66f56cf9ee58cb70d2bff0e9",
+    "hle-diamond-66f8cff8469c315e2c9ed2f6",
+    "hle-diamond-66fb417395a8e2fc57e479d7",
+    "hle-diamond-6700232f9205aedb0430463b",
+    "hle-diamond-67004f7644420b59a377790f",
+    "hle-diamond-6700fe18dcd877e17dbc6c26",
+    "hle-diamond-670127746c7d6577be41c989",
+    "hle-diamond-670fe86a7e294dc6ad20c1ba",
+    "hle-diamond-67169906187dc7ac4a7ae1a8",
+    "hle-diamond-6717ebf9d1edff0614647df5",
+    "hle-diamond-671a22850b52f35047c0b230",
+    "hle-diamond-671a9248e80e8243581887ce",
+    "hle-diamond-671da6a76070b7a055069624",
+    "hle-diamond-671f1f0bb0b665acec70c3aa",
+    "hle-diamond-67218f865b0747ce2231d48c",
+    "hle-diamond-6722613b4152cab57c187de5",
+    "hle-diamond-67230d6e736f03c0e4c1adee",
+    "hle-diamond-672412e75247738dfbb432e7",
+    "hle-diamond-6725280ff2e932808735b2e8",
+    "hle-diamond-67253690bcd1c268662e77bb",
+    "hle-diamond-6725f4199a1073f00ecc2312",
+    "hle-diamond-672669616633802b43ad2332",
+    "hle-diamond-672b687682d2a83f881d7c5a",
+    "hle-diamond-672d44d02a52b5a11753319c",
+    "hle-diamond-672e09b50a85795d0ed2d36e",
+    "hle-diamond-6732d3b01a3f938f2274a659",
+    "hle-diamond-673641e0ae322e42828041f2",
+    "hle-diamond-67379aea6c946be458900f3f",
+    "hle-diamond-6737d23a6a364decc45cc7ee",
+    "hle-diamond-673a92ad437529d472475406",
+    "hle-diamond-673b4efb373d154ce855b23b",
+    "hle-diamond-67423e4e949299fb3aa1f174",
+    "hle-diamond-67428dcab53462ceeb83c6f6",
+    "hle-diamond-67440064abafa90f5b9d4da9",
+    "hle-diamond-67474e78231099aba5aa677d",
+    "hle-diamond-6747fa2a456927085f863956",
+    "hle-diamond-67534b99c400be23a34fd7b8",
+    "hle-diamond-676c874f5c701c0c4e517354",
+    "hle-diamond-6771a5c801a4f50fae8acc0c",
+    "hle-diamond-678dadfaa2acdbbe2a403cb7",
+    "hle-diamond-67956249c222b7268c796caf",
+    "hle-diamond-67a4942eb1699f97560c706f",
+    "hle-diamond-67b0a2303a367495ebd4df58",
+    "hle-diamond-67b14322ac14e54ff5f30274",
+    "hle-diamond-67b1ac7a0724fd0788302708",
+    "hle-diamond-67b670975c23f0f8f106d3b2",
+    "hle-diamond-67bd5ffb996cc04fa17bee4f",
+    "hle-diamond-67bec80c55a94d7e8997f8d7",
+    "hle-diamond-67c158c8f98cdae328e0ff70",
+    "hle-diamond-67cc06340a243a279c79e730",
+    "hle-diamond-67ce68cd8fbe3af1e6b662ee",
+    "hle-diamond-67d66f825c8a042761870dc8",
+    "hle-diamond-692537c38e911a3f838e387f",
+    "hle-diamond-69a11db773d4b5953a275a29",
+    "hle-diamond-69a3405f9eefda9b16c6e0c2"
+  ],
+  "categories": [
+    {
+      "label": "Atomic, Molecular & Optical Physics",
+      "questions": 6
+    },
+    {
+      "label": "Condensed Matter Physics",
+      "questions": 14
+    },
+    {
+      "label": "Electromagnetism",
+      "questions": 3
+    },
+    {
+      "label": "Experimental & Applied Physics",
+      "questions": 2
+    },
+    {
+      "label": "Fluid & Plasma Dynamics",
+      "questions": 6
+    },
+    {
+      "label": "Gravitation, Cosmology & Astrophysics",
+      "questions": 7
+    },
+    {
+      "label": "High Energy & Particle Physics",
+      "questions": 9
+    },
+    {
+      "label": "Mathematical Physics",
+      "questions": 4
+    },
+    {
+      "label": "Nonlinear Dynamics & Classical Mechanics",
+      "questions": 4
+    },
+    {
+      "label": "Optics & Photonics",
+      "questions": 2
+    },
+    {
+      "label": "Quantum Information, Science & Technology",
+      "questions": 2
+    },
+    {
+      "label": "Statistical Physics & Thermodynamics",
+      "questions": 2
+    }
+  ],
+  "failure_policy": "Exhausted generation failures count as false; missing plans and judge errors remain unknown and block plotting. No question filtering.",
+  "limitations": "Configured-system comparison; budgets are not necessarily matched. pass@k is an oracle metric. Small category counts can be unstable.",
+  "systems": {
+    "theo-conductor-v0.2": {
+      "sources": [
+        {
+          "path": "/mnt/data/home/arjun/theo-conductor/outputs/hle-diamond-physics-conductor-v0.2-mean4-20261004/results.jsonl",
+          "sha256": "c31483a497edd81afee2cec1844c34039ddbe8feda88393db11153daaaa764b2"
+        }
+      ],
+      "generation_failures": 42,
+      "overall": {
+        "mean_at_k": 0.5122950819672131,
+        "pass_at_k": 0.7540983606557377,
+        "complete_questions": 61,
+        "expected_questions": 61
+      },
+      "categories": {
+        "Atomic, Molecular & Optical Physics": {
+          "mean_at_k": 0.375,
+          "pass_at_k": 0.5,
+          "complete_questions": 6,
+          "expected_questions": 6
+        },
+        "Condensed Matter Physics": {
+          "mean_at_k": 0.5714285714285714,
+          "pass_at_k": 0.7857142857142857,
+          "complete_questions": 14,
+          "expected_questions": 14
+        },
+        "Electromagnetism": {
+          "mean_at_k": 0.6666666666666666,
+          "pass_at_k": 1,
+          "complete_questions": 3,
+          "expected_questions": 3
+        },
+        "Experimental & Applied Physics": {
+          "mean_at_k": 0.625,
+          "pass_at_k": 1,
+          "complete_questions": 2,
+          "expected_questions": 2
+        },
+        "Fluid & Plasma Dynamics": {
+          "mean_at_k": 0.5416666666666666,
+          "pass_at_k": 0.6666666666666666,
+          "complete_questions": 6,
+          "expected_questions": 6
+        },
+        "Gravitation, Cosmology & Astrophysics": {
+          "mean_at_k": 0.21428571428571427,
+          "pass_at_k": 0.5714285714285714,
+          "complete_questions": 7,
+          "expected_questions": 7
+        },
+        "High Energy & Particle Physics": {
+          "mean_at_k": 0.4722222222222222,
+          "pass_at_k": 0.6666666666666666,
+          "complete_questions": 9,
+          "expected_questions": 9
+        },
+        "Mathematical Physics": {
+          "mean_at_k": 0.5625,
+          "pass_at_k": 1,
+          "complete_questions": 4,
+          "expected_questions": 4
+        },
+        "Nonlinear Dynamics & Classical Mechanics": {
+          "mean_at_k": 0.6875,
+          "pass_at_k": 1,
+          "complete_questions": 4,
+          "expected_questions": 4
+        },
+        "Optics & Photonics": {
+          "mean_at_k": 0.625,
+          "pass_at_k": 1,
+          "complete_questions": 2,
+          "expected_questions": 2
+        },
+        "Quantum Information, Science & Technology": {
+          "mean_at_k": 0.375,
+          "pass_at_k": 0.5,
+          "complete_questions": 2,
+          "expected_questions": 2
+        },
+        "Statistical Physics & Thermodynamics": {
+          "mean_at_k": 0.875,
+          "pass_at_k": 1,
+          "complete_questions": 2,
+          "expected_questions": 2
+        }
+      }
+    },
+    "fugu ultra v2": {
+      "sources": [
+        {
+          "path": "/mnt/data/home/arjun/theo-conductor/outputs/hle-diamond-fugu-ultra-v2-mean4/run-1/results.jsonl",
+          "sha256": "587f04dd34f7f81b52b1352abd9580ddfd608e58ac250a959cc956c40d855166"
+        },
+        {
+          "path": "/mnt/data/home/arjun/theo-conductor/outputs/hle-diamond-fugu-ultra-v2-mean4/run-2/results.jsonl",
+          "sha256": "054e13b43fcb9c58a83dda6ef61f1cba8f8e531d14258bbf779140821eab25aa"
+        },
+        {
+          "path": "/mnt/data/home/arjun/theo-conductor/outputs/hle-diamond-fugu-ultra-v2-mean4/run-3/results.jsonl",
+          "sha256": "8fe4bd4d4324d468e3d7ad87bc824701c601ea385a28e1a875f617586dd67ea5"
+        },
+        {
+          "path": "/mnt/data/home/arjun/theo-conductor/outputs/hle-diamond-fugu-ultra-v2-mean4/run-4/results.jsonl",
+          "sha256": "6e0e282db65207c77165380014ed5601b4bc7934e57a02006de1babf4a811304"
+        }
+      ],
+      "generation_failures": 0,
+      "overall": {
+        "mean_at_k": 0.5,
+        "pass_at_k": 0.639344262295082,
+        "complete_questions": 61,
+        "expected_questions": 61
+      },
+      "categories": {
+        "Atomic, Molecular & Optical Physics": {
+          "mean_at_k": 0.20833333333333334,
+          "pass_at_k": 0.3333333333333333,
+          "complete_questions": 6,
+          "expected_questions": 6
+        },
+        "Condensed Matter Physics": {
+          "mean_at_k": 0.48214285714285715,
+          "pass_at_k": 0.5,
+          "complete_questions": 14,
+          "expected_questions": 14
+        },
+        "Electromagnetism": {
+          "mean_at_k": 0.8333333333333334,
+          "pass_at_k": 1,
+          "complete_questions": 3,
+          "expected_questions": 3
+        },
+        "Experimental & Applied Physics": {
+          "mean_at_k": 0.5,
+          "pass_at_k": 0.5,
+          "complete_questions": 2,
+          "expected_questions": 2
+        },
+        "Fluid & Plasma Dynamics": {
+          "mean_at_k": 0.4166666666666667,
+          "pass_at_k": 0.5,
+          "complete_questions": 6,
+          "expected_questions": 6
+        },
+        "Gravitation, Cosmology & Astrophysics": {
+          "mean_at_k": 0.32142857142857145,
+          "pass_at_k": 0.5714285714285714,
+          "complete_questions": 7,
+          "expected_questions": 7
+        },
+        "High Energy & Particle Physics": {
+          "mean_at_k": 0.5,
+          "pass_at_k": 0.7777777777777778,
+          "complete_questions": 9,
+          "expected_questions": 9
+        },
+        "Mathematical Physics": {
+          "mean_at_k": 0.875,
+          "pass_at_k": 1,
+          "complete_questions": 4,
+          "expected_questions": 4
+        },
+        "Nonlinear Dynamics & Classical Mechanics": {
+          "mean_at_k": 0.4375,
+          "pass_at_k": 0.75,
+          "complete_questions": 4,
+          "expected_questions": 4
+        },
+        "Optics & Photonics": {
+          "mean_at_k": 1,
+          "pass_at_k": 1,
+          "complete_questions": 2,
+          "expected_questions": 2
+        },
+        "Quantum Information, Science & Technology": {
+          "mean_at_k": 0.375,
+          "pass_at_k": 0.5,
+          "complete_questions": 2,
+          "expected_questions": 2
+        },
+        "Statistical Physics & Thermodynamics": {
+          "mean_at_k": 0.875,
+          "pass_at_k": 1,
+          "complete_questions": 2,
+          "expected_questions": 2
+        }
+      }
+    }
+  },
+  "dataset": "hle",
+  "dataset_label": "HLE-Diamond-Physics",
+  "classification": "tag_1",
+  "metadata": {
+    "path": "/mnt/data/home/arjun/theo-conductor/outputs/hle-diamond-physics-classifications-gpt-5.6-sol/classifications.jsonl",
+    "sha256": "ff991c2fee06e661eff56b7307019be3ff3baa2d21eade9311021cc6dbdb12b6"
+  }
+}

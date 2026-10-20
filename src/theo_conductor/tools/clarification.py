@@ -65,23 +65,18 @@ class RequestClarificationTool(BaseTool[ClarificationRequest]):
 
 
 class ConductorClarificationHandler:
-    """Ask GPT-6 Astra to resolve a worker clarification request."""
+    """Ask the active conductor to resolve a worker clarification request."""
 
-    def __init__(self, model_registry: Any, model_id: str = "gpt-6-astra") -> None:
+    def __init__(self, model_registry: Any, model_id: str | None = None) -> None:
         self.model_registry = model_registry
         self.model_id = model_id
 
     def _model(self) -> tuple[str, Any]:
-        try:
-            return self.model_id, self.model_registry.get(self.model_id)
-        except ValueError:
-            for key, spec in self.model_registry._models.items():
-                if spec.name == self.model_id or spec.display_name == "GPT-6 Astra":
-                    return str(key), spec
-        raise ValueError(
-            f"request_clarification requires model {self.model_id!r} in the model registry; "
-            "configure conductor_model or enable user clarification"
-        )
+        model_id = self.model_id if self.model_id is not None else self.model_registry.conductor_model
+        if model_id is None:
+            raise ValueError("request_clarification requires an active conductor_model; "
+                             "configure it or enable user clarification")
+        return model_id, self.model_registry.get(model_id)
 
     @staticmethod
     def _usage_with_cost(usage: dict[str, Any] | None, spec: Any) -> dict[str, Any] | None:
@@ -139,7 +134,7 @@ class ConductorClarificationHandler:
         selected = answer.get("selected_option")
         option_ids = {option["id"] for option in options}
         if selected is not None and selected not in option_ids:
-            raise ValueError("GPT-6 Astra selected an unknown clarification option")
+            raise ValueError(f"Conductor {model_id!r} selected an unknown clarification option")
         return ToolOutcome(
             value={"answered": True, "source": "conductor", **answer},
             model_id=model_id,

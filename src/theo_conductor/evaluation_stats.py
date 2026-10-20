@@ -18,7 +18,10 @@ def usage_metrics(usage: dict | None) -> dict:
     total = numeric(usage.get('total_tokens'))
     if total is None and prompt is not None and completion is not None:
         total = prompt + completion
-    return {'prompt_tokens': prompt, 'completion_tokens': completion, 'total_tokens': total,
+    details = usage.get('cost_details') or {}
+    return {'server_tool_cost_usd': numeric(details.get('server_tool_cost')),
+            'upstream_inference_cost_usd': numeric(details.get('upstream_inference_cost')),
+            'prompt_tokens': prompt, 'completion_tokens': completion, 'total_tokens': total,
             'cost_usd': numeric(usage.get('cost', usage.get('estimated_cost_usd'))),
             'reported_cost_usd': numeric(usage.get('cost')),
             'estimated_cost_usd': numeric(usage.get('estimated_cost_usd'))}
@@ -26,7 +29,7 @@ def usage_metrics(usage: dict | None) -> dict:
 
 def metric_summary(items: list[dict]) -> dict:
     result = {'observations': len(items)}
-    for key in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'cost_usd', 'reported_cost_usd', 'estimated_cost_usd', 'latency_ms'):
+    for key in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'cost_usd', 'reported_cost_usd', 'estimated_cost_usd', 'server_tool_cost_usd', 'upstream_inference_cost_usd', 'latency_ms'):
         values = [value for item in items if (value := numeric(item.get(key))) is not None]
         ordered = sorted(values)
         result[key] = {'known': len(values), 'unknown': len(items) - len(values),

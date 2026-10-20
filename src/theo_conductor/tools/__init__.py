@@ -8,13 +8,13 @@ from .clarification import (
 )
 
 
-def default_tool_registry(model_registry, *, ask_user: bool = False) -> ToolRegistry:
-    """Route clarification to GPT-6 Astra unless user input is explicitly enabled."""
+def default_tool_registry(model_registry, *, ask_user: bool = False, conductor_model: str | None = None) -> ToolRegistry:
+    """Route clarification to the active conductor unless user input is enabled."""
     handler = (
         InteractiveClarificationHandler()
         if ask_user
         else ConductorClarificationHandler(
-            model_registry, model_id=model_registry.conductor_model or "gpt-6-astra"
+            model_registry, model_id=conductor_model
         )
     )
     return ToolRegistry([

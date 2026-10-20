@@ -91,8 +91,9 @@ def test_runner_executes_tool_continues_worker_and_logs_result():
     assert tool_message["role"] == "tool"
     assert json.loads(tool_message["content"])["answered"] is True
 
-def test_runner_asks_gpt6_astra_by_default_and_tracks_its_usage():
-    class AstraClient:
+@pytest.mark.parametrize('override', [False, True])
+def test_runner_asks_active_conductor_and_tracks_its_usage(override):
+    class ConductorClient:
         async def generate(self, **kwargs):
             return ModelResponse(
                 text=json.dumps({
@@ -108,13 +109,14 @@ def test_runner_asks_gpt6_astra_by_default_and_tracks_its_usage():
     registry = ModelRegistry([
         ModelSpec(model_idx="worker", client=worker, supports_tools=True),
         ModelSpec(
-            model_idx="gpt-6-astra",
-            name="gpt-6-astra",
-            client=AstraClient(),
+            model_idx="active-conductor",
+            name="active-conductor",
+            client=ConductorClient(),
             cost_per_1m_input_tokens=10.0,
             cost_per_1m_output_tokens=50.0,
         ),
-    ])
+        ModelSpec(model_idx="gpt-6-astra", client=object()),
+    ], conductor_model="gpt-6-astra" if override else "active-conductor")
     task = Task(
         task_type="physics",
         difficulty=Difficulty.MEDIUM,
@@ -122,14 +124,24 @@ def test_runner_asks_gpt6_astra_by_default_and_tracks_its_usage():
         workflow=[Step(step_id="final", model_id="worker", instruction="Derive it.")],
     )
 
-    output = asyncio.run(Runner(registry).run(task)).outputs["final"]
+    output = asyncio.run(Runner(registry, conductor_model="active-conductor" if override else None).run(task)).outputs["final"]
 
     result = json.loads(worker.calls[1]["messages"][-1]["content"])
     assert result["source"] == "conductor"
     assert result["selected_option"] == "closed"
-    assert output.tool_calls[0].model_id == "gpt-6-astra"
+    assert output.tool_calls[0].model_id == "active-conductor"
     assert output.tool_calls[0].usage["total_tokens"] == 15
     assert output.tool_calls[0].usage["estimated_cost_usd"] == pytest.approx(0.00035)
+
+
+def test_clarification_never_falls_back_to_astra_or_provider_aliases():
+    from theo_conductor.tools import ConductorClarificationHandler
+    registry = ModelRegistry([ModelSpec(model_idx='astra', name='missing',
+                                        display_name='GPT-6 Astra', client=object())])
+    with pytest.raises(ValueError, match='active conductor_model'):
+        ConductorClarificationHandler(registry)._model()
+    with pytest.raises(ValueError, match="Model 'missing' not found"):
+        ConductorClarificationHandler(registry, model_id='missing')._model()
 
 
 def test_runner_can_opt_in_to_asking_the_user(monkeypatch):

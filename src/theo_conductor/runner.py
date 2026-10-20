@@ -87,15 +87,20 @@ class Runner:
         call_checkpoint: Callable[..., Awaitable[None]] | None = None,
         tool_checkpoint: Callable[..., Awaitable[None]] | None = None,
         call_started: Callable[..., Awaitable[None]] | None = None,
+        conductor_model: str | None = None,
+        server_shell: Any | None = None,
+        request_timeout_seconds: float | None = None,
     ) -> None:
         if max_worker_tokens is not None and max_worker_tokens <= 0:
             raise ValueError("max_worker_tokens must be positive")
         if max_tool_rounds <= 0:
             raise ValueError("max_tool_rounds must be positive")
         self.model_registry = model_registry
+        self.conductor_model = conductor_model if conductor_model is not None else model_registry.conductor_model
         self.tool_registry = (
             tool_registry if tool_registry is not None
-            else default_tool_registry(model_registry, ask_user=ask_user_for_clarification)
+            else default_tool_registry(model_registry, ask_user=ask_user_for_clarification,
+                                       conductor_model=self.conductor_model)
         )
         self.artifact_store = artifact_store
         self.event_handler = event_handler
@@ -107,6 +112,10 @@ class Runner:
         self.call_checkpoint = call_checkpoint
         self.tool_checkpoint = tool_checkpoint
         self.call_started = call_started
+        self.server_shell = server_shell
+        if request_timeout_seconds is not None and request_timeout_seconds <= 0:
+            raise ValueError('request_timeout_seconds must be positive')
+        self.request_timeout_seconds = request_timeout_seconds
 
     async def run(
         self, task: Task, *,
@@ -175,6 +184,12 @@ class Runner:
         if self.event_handler:
             self.event_handler("started", step, None)
         spec, request = self.prepare_step(step, task, outputs)
+        if self.server_shell is not None:
+            response = await self._generate(step, spec, request)
+            for call in response.server_tool_calls:
+                if self.tool_checkpoint:
+                    await self.tool_checkpoint(step, call)
+            return self.complete_step(step, spec, response, tool_calls=list(response.server_tool_calls))
         if step.needs_tools and not self.tool_registry:
             raise ValueError(f"Step {step.step_id!r} needs tools, but no tools are registered")
         if self.tool_registry and spec.supports_tools:
@@ -187,7 +202,9 @@ class Runner:
         if self.call_started:
             await self.call_started(step, spec, request)
         try:
-            response = await spec.client.generate(**request)
+            async with asyncio.timeout(self.request_timeout_seconds):
+                response = (await self.server_shell.generate(spec, request)
+                            if self.server_shell is not None else await spec.client.generate(**request))
         except Exception as exc:
             if self.call_checkpoint:
                 await self.call_checkpoint(step, spec, None, exc, (time.perf_counter()-started)*1000)

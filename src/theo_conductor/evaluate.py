@@ -6,6 +6,7 @@ import asyncio
 import fcntl
 import hashlib
 import json
+import math
 import os
 import sys
 import time
@@ -27,6 +28,8 @@ from .prompt import (DEFAULT_PROMPT_PATH, QUESTION_MARKER, load_prompt_template,
 from .runner import Runner, WorkflowStepError, _usage_with_estimated_cost
 from .schema import Step, StepOutput, Task
 from .tools import ToolRegistry
+from .tools.openrouter_shell import OpenRouterShell, DESCRIPTION, hydrate_record, validate_client
+from . import prlbench
 from .worker_prompt import DEFAULT_WORKER_PROMPT_PATH
 
 
@@ -36,6 +39,11 @@ def fingerprint(value: Any) -> str:
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+async def bounded_request(awaitable, args):
+    async with asyncio.timeout(getattr(args, 'request_timeout_seconds', None)):
+        return await awaitable
 
 
 def spec_identity(spec: Any) -> dict:
@@ -117,13 +125,14 @@ def new_record(row: dict, index: int, sample: int, model: str) -> dict:
             'gold_answer': row.get('answer', row.get('gold_answer')),
             'reference_answer': row.get('reference_answer'), 'subject': row.get('subject'),
             'answer_type': row.get('answer_type'), 'track': row.get('track'),
+            'pass_threshold': row.get('pass_threshold', .7), 'subtask_count': row.get('subtask_count'),
             'task_group_id': row.get('task_group_id'), 'status': 'pending', 'error': None,
             'response': None, 'correct': None, 'worker_outputs': {}, 'step_fingerprints': {},
             'failed_steps': {}, 'attempt_history': []}
 
 
 def clear_judge(record: dict) -> None:
-    for key in ('judge_model', 'judge_correct', 'judge_error', 'judge_reason', 'judge_response', 'judge_fingerprint', 'judge_score', 'judge_scoring', 'correct'):
+    for key in ('judge_model', 'judge_correct', 'judge_error', 'judge_reason', 'judge_response', 'judge_fingerprint', 'judge_score', 'judge_scoring', 'judge_criteria', 'correct'):
         record[key] = None
 
 
@@ -136,7 +145,8 @@ def event(record: dict, stage: str, model_id: str, *, output: Any = None,
         'step_id': step_id, 'attempt': len(record['attempt_history']) + 1,
         'usage': usage, 'latency_ms': latency if latency is not None else getattr(output, 'latency_ms', getattr(error, 'elapsed_ms', None)),
         'finish_reason': getattr(output, 'finish_reason', None), 'failure_reason': reason,
-        'error': str(error) if error else None, 'response': getattr(output, 'text', None)})
+        'error': str(error) if error else None, 'response': getattr(output, 'text', None),
+        **({'raw_response': output.raw} if output is not None and isinstance(getattr(output, 'raw', None), dict) and output.raw.get('object') == 'response' else {})})
 
 
 def begin_request(record: dict, store: RunStore, stage: str, model_id: str, step_id: str | None = None) -> None:
@@ -179,9 +189,9 @@ async def generate_plan(record: dict, *, store: RunStore, registry: ModelRegistr
         response = None
         begin_request(record, store, 'planner', planner)
         try:
-            response = await spec.client.generate(instruction=prompt, question='', context={},
+            response = await bounded_request(spec.client.generate(instruction=prompt, question='', context={},
                 messages=messages, max_tokens=args.plan_max_tokens, temperature=args.plan_temperature,
-                response_format=workflow_response_format(model_ids))
+                response_format=workflow_response_format(model_ids)), args)
             response = replace(response, usage=_usage_with_estimated_cost(response.usage, spec))
             check_response(response, 'planner')
             plan = validate_plan(json.loads(response.text), set(model_ids))
@@ -198,12 +208,12 @@ async def generate_plan(record: dict, *, store: RunStore, registry: ModelRegistr
 
 async def execute_workflow(record: dict, *, store: RunStore, registry: ModelRegistry, args: argparse.Namespace) -> None:
     task = Task.from_dict({**record['plan'], 'question': record['question'], 'image': record.get('image')})
-    runner = Runner(registry, max_worker_tokens=args.max_tokens,
-                    use_model_output_limits=args.max_tokens is None, worker_temperature=args.temperature)
+    runner = evaluation_runner(registry, store, args, direct=False,
+                               conductor_model=record.get('planner_model_id') or getattr(args, 'planner_model', None))
     cached: dict[str, StepOutput] = {}
     def request_key(spec, request):
         tool_models = [spec_identity(registry.get(key)) for key in registry.model_ids()] if spec.supports_tools else []
-        return fingerprint([spec_identity(spec), request, tool_models, DEFAULT_WORKER_PROMPT_PATH.read_text()])
+        return fingerprint([spec_identity(spec), request, tool_models, DEFAULT_WORKER_PROMPT_PATH.read_text(), tool_identity(args), runner.conductor_model])
     # Recompute request identities in order. If a dependency is invalidated, so are its descendants.
     for step in task.workflow:
         dependencies = set(step.access_list) & {s.step_id for s in task.workflow}
@@ -244,7 +254,7 @@ async def execute_workflow(record: dict, *, store: RunStore, registry: ModelRegi
         record['attempt_history'].append({'timestamp': now(), 'stage': 'tool',
             'model_id': call.model_id or call.name, 'step_id': step.step_id,
             'usage': call.usage, 'latency_ms': call.duration_ms,
-            'failure_reason': 'tool_error' if call.is_error else None})
+            'failure_reason': 'tool_error' if call.is_error else None, 'tool_call': call.model_dump(mode='json')})
         store.save(record)
 
     runner.call_checkpoint = call_checkpoint
@@ -271,6 +281,8 @@ async def execute_workflow(record: dict, *, store: RunStore, registry: ModelRegi
 
     for _ in range(args.attempts):
         try:
+            record.update(status='running')
+            store.save(record)
             result = await runner.run(task, initial_outputs={key: StepOutput(**value) for key, value in record['worker_outputs'].items()},
                                       checkpoint=checkpoint, fail_on_incomplete=True)
             record.update(response=result.outputs[task.workflow[-1].step_id].text, status='completed', error=None,
@@ -278,7 +290,8 @@ async def execute_workflow(record: dict, *, store: RunStore, registry: ModelRegi
             record['extracted_answer'] = extract_final_answer(record['response'])
             break
         except Exception as exc:
-            record.update(error=f'{type(exc).__name__}: {exc}', status='failed')
+            record.update(error=f'{type(exc).__name__}: {exc}',
+                          status='failed' if _ == args.attempts - 1 else 'running')
             store.save(record)
     record['workflow_runtime_ms'] = previous_runtime + (time.perf_counter()-started)*1000
     totals = [usage_metrics(output.get('usage')) for output in record['worker_outputs'].values()]
@@ -291,22 +304,59 @@ async def execute_workflow(record: dict, *, store: RunStore, registry: ModelRegi
     store.save(record)
 
 
+def tool_identity(args: argparse.Namespace) -> dict:
+    return {key: getattr(args, key, None) for key in (
+        'openrouter_shell', 'max_tool_rounds', 'shell_runtime_sha256')}
+
+
+def evaluation_runner(registry: ModelRegistry, store: RunStore, args: argparse.Namespace, *, direct: bool,
+                      conductor_model: str | None = None) -> Runner:
+    tools = None if not direct else ToolRegistry()
+    shell = OpenRouterShell() if args.openrouter_shell else None
+    if shell:
+        tools = ToolRegistry()
+    return Runner(registry, tool_registry=tools, max_worker_tokens=args.max_tokens,
+                  use_model_output_limits=args.max_tokens is None, worker_temperature=args.temperature,
+                  request_timeout_seconds=getattr(args, 'request_timeout_seconds', None),
+                  max_tool_rounds=args.max_tool_rounds, conductor_model=conductor_model, server_shell=shell)
+
+
 async def generate_model(record: dict, *, store: RunStore, registry: ModelRegistry, model: str, args: argparse.Namespace) -> None:
     spec = registry.get(model)
-    key = fingerprint([spec_identity(spec), record['question'], record.get('image'), args.max_tokens, args.temperature, DEFAULT_WORKER_PROMPT_PATH.read_text()])
+    key = fingerprint([spec_identity(spec), record['question'], record.get('image'), args.max_tokens, args.temperature,
+                       DEFAULT_INSTRUCTION, DEFAULT_WORKER_PROMPT_PATH.read_text(), tool_identity(args)])
     if record.get('generation_fingerprint') == key and record.get('status') == 'completed':
         return
-    record.update(generation_fingerprint=key, response=None, status='running', error=None)
+    record.update(generation_fingerprint=key, response=None, tool_calls=[], status='running', error=None)
     clear_judge(record)
     store.save(record)
-    runner = Runner(registry, tool_registry=ToolRegistry(), max_worker_tokens=args.max_tokens,
-                    use_model_output_limits=args.max_tokens is None, worker_temperature=args.temperature)
+    runner = evaluation_runner(registry, store, args, direct=True)
+    async def call_started(step, spec, request):
+        begin_request(record, store, 'solver', model)
+    async def call_checkpoint(step, spec, response, error, elapsed):
+        if response:
+            response = replace(response, usage=_usage_with_estimated_cost(response.usage, spec))
+            if not response.tool_calls:
+                try:
+                    check_response(response, 'final')
+                except WorkflowStepError as exc:
+                    error = exc
+        event(record, 'solver', model, output=response, error=error, latency=elapsed)
+        store.save(record)
+    async def tool_checkpoint(step, call):
+        record['tool_calls'].append(call.model_dump(mode='json'))
+        record['attempt_history'].append({'timestamp': now(), 'stage': 'tool', 'model_id': call.name,
+            'usage': call.usage, 'latency_ms': call.duration_ms, 'tool_call': call.model_dump(mode='json'),
+            'failure_reason': 'tool_error' if call.is_error else None})
+        store.save(record)
+    runner.call_started = call_started
+    runner.call_checkpoint = call_checkpoint
+    runner.tool_checkpoint = tool_checkpoint
     step = Step(step_id='final', model_id=model, instruction=DEFAULT_INSTRUCTION, access_list=['question'])
     task = Task(task_type='other', difficulty='hard', question=record['question'], image=record.get('image'), workflow=[step])
     for _ in range(args.attempts):
-        started = time.perf_counter()
         output = None
-        begin_request(record, store, 'solver', model)
+        record['tool_calls'] = []
         try:
             output = await runner.run_step(step, task, {})
             check_response(output, 'final')
@@ -314,12 +364,10 @@ async def generate_model(record: dict, *, store: RunStore, registry: ModelRegist
                           finish_reason=output.finish_reason, latency_ms=output.latency_ms,
                           **{key: value for key, value in usage_metrics(output.usage).items() if key in {'prompt_tokens', 'completion_tokens', 'total_tokens'}},
                           estimated_cost_usd=usage_metrics(output.usage)['cost_usd'])
-            event(record, 'solver', model, output=output, latency=(time.perf_counter()-started)*1000)
             store.save(record)
             return
         except Exception as exc:
             record.update(error=f'{type(exc).__name__}: {exc}', status='failed', finish_reason=getattr(output, 'finish_reason', None))
-            event(record, 'solver', model, output=output, error=exc, latency=(time.perf_counter()-started)*1000)
             store.save(record)
 
 
@@ -332,9 +380,20 @@ async def judge_completion(record: dict, *, store: RunStore, registry: ModelRegi
         return
     spec = registry.get(judge)
     rubric = record.get('answer_type') == 'rubric10'
-    instruction = RUBRIC_JUDGE_INSTRUCTION if rubric else JUDGE_INSTRUCTION
+    prl = record.get('answer_type') == 'prlbench_criteria'
+    instruction = prlbench.JUDGE_INSTRUCTION if prl else RUBRIC_JUDGE_INSTRUCTION if rubric else JUDGE_INSTRUCTION
+    if prl:
+        try:
+            await bounded_request(hydrate_record(record, registry, store.root, lambda: store.save(record)), args)
+        except Exception as exc:
+            clear_judge(record)
+            record.update(judge_model=judge, judge_error=f'Plot retrieval: {type(exc).__name__}: {exc}')
+            store.save(record)
+            return
+    evidence = prlbench.execution_evidence(record) if prl else None
     key = fingerprint([spec_identity(spec), record['question'], record.get('gold_answer'), record.get('reference_answer'),
-                       record['response'], args.judge_max_tokens, instruction])
+                       record['response'], args.judge_max_tokens, instruction, evidence,
+                       record.get('pass_threshold') if prl else None])
     if record.get('judge_fingerprint') == key and isinstance(record.get('judge_correct'), bool) and not args.force:
         return
     clear_judge(record)
@@ -345,15 +404,23 @@ async def judge_completion(record: dict, *, store: RunStore, registry: ModelRegi
         response = None
         begin_request(record, store, 'judge', judge)
         try:
-            response = await spec.client.generate(instruction=instruction,
-                question=build_judge_batch_question([('item', record)]), context={}, temperature=0,
-                max_tokens=args.judge_max_tokens, response_format=build_judge_response_format(['item'], rubric=rubric))
+            question = prlbench.judge_question(record) if prl else build_judge_batch_question([('item', record)])
+            messages = prlbench.judge_messages(record, store.root, instruction, question) if prl else None
+            response = await bounded_request(spec.client.generate(instruction=instruction,
+                question=question, context={}, temperature=0, messages=messages,
+                max_tokens=args.judge_max_tokens, response_format=prlbench.response_format(record['gold_answer']) if prl else build_judge_response_format(['item'], rubric=rubric)), args)
             response = replace(response, usage=_usage_with_estimated_cost(response.usage, spec))
             check_response(response, 'judge')
-            value, reason = (parse_rubric_judge_batch if rubric else parse_judge_batch)(response.text, ['item'])['item']
-            correct = value >= 7 if rubric else value
+            if prl:
+                value, details = prlbench.parse_verdict(response.text, record['gold_answer'])
+                record['judge_criteria'] = details
+                reason = f"{sum(c['correct'] for c in details)}/{len(details)} criteria satisfied"
+                correct = value >= record['pass_threshold']
+            else:
+                value, reason = (parse_rubric_judge_batch if rubric else parse_judge_batch)(response.text, ['item'])['item']
+                correct = value >= 7 if rubric else value
             record.update(judge_correct=correct, correct=correct, judge_reason=reason, judge_response=response.text, judge_error=None)
-            record.update(judge_score=value if rubric else None, judge_scoring='rubric10-v1' if rubric else 'boolean')
+            record.update(judge_score=value if rubric or prl else None, judge_scoring=prlbench.SCORING if prl else 'rubric10-v1' if rubric else 'boolean')
             event(record, 'judge', judge, output=response, latency=(time.perf_counter()-started)*1000)
             store.save(record)
             return
@@ -375,10 +442,16 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument('--judge-model', help='Registry model ID; omit to generate without judging')
         command.add_argument('--judge-max-tokens', type=int, default=8192)
         command.add_argument('--force', action='store_true', help='Rejudge existing verdicts')
+        command.add_argument('--request-timeout-seconds', type=float,
+                             help='Hard elapsed deadline per model request or plot retrieval, including server tool execution')
+        command.add_argument('--workflow-timeout-seconds', type=float,
+                             help='Hard elapsed deadline per item, including planning, retries and judging; excludes queue time')
         if name != 'judge':
             command.add_argument('--samples', type=int, default=1, help='Independent samples per question; may increase on resume')
             command.add_argument('--max-tokens', type=int, help='Worker/solver cap; default: configured model output limit')
             command.add_argument('--temperature', type=float, default=.2)
+            command.add_argument('--openrouter-shell', action='store_true', help='Enable native offline OpenRouter hosted shell via Responses API')
+            command.add_argument('--max-tool-rounds', type=int, default=8)
         if name in ('plans', 'workflows'):
             command.add_argument('--planner-model', help='Registry model ID')
             command.add_argument('--prompt-file', type=Path, default=DEFAULT_PROMPT_PATH)
@@ -387,6 +460,8 @@ def parser() -> argparse.ArgumentParser:
         if name in ('plans', 'model'):
             command.add_argument('--input', type=Path, required=True, help='Question JSONL: id, question, answer, optional image')
         if name == 'workflows':
+            command.add_argument('--retry-failed', action='store_true',
+                                 help='Skip completed slots before planning, cache validation or judging')
             source = command.add_mutually_exclusive_group(required=True)
             source.add_argument('--input', type=Path, help='Generate plans and execute them')
             source.add_argument('--plans', type=Path, help='Execute plans.jsonl or a plan run directory')
@@ -435,7 +510,9 @@ async def run(args: argparse.Namespace, registry: ModelRegistry | None = None) -
                 raise ValueError('Aggregate runs must have identical input/model/mode identities')
             identity = manifest['identity']
             settings = {key: value for key, value in manifest['settings_history'][-1]['settings'].items()
-                        if key in {'config_sha256', 'max_tokens', 'temperature', 'plan_max_tokens', 'plan_temperature'}}
+                        if key in {'config_sha256', 'max_tokens', 'temperature', 'plan_max_tokens', 'plan_temperature',
+                                   'openrouter_shell', 'max_tool_rounds', 'shell_runtime_sha256',
+                                   'request_timeout_seconds', 'workflow_timeout_seconds'}}
             if generation_settings is not None and settings != generation_settings:
                 raise ValueError('Aggregate runs have different generation settings')
             generation_settings = settings
@@ -459,10 +536,20 @@ async def run(args: argparse.Namespace, registry: ModelRegistry | None = None) -
     for key in ('concurrency', 'attempts', 'judge_max_tokens'):
         if getattr(args, key) <= 0:
             raise ValueError(f'{key} must be positive')
+    for key in ('request_timeout_seconds', 'workflow_timeout_seconds'):
+        value = getattr(args, key, None)
+        if value is not None and (not math.isfinite(value) or value <= 0):
+            raise ValueError(f'{key} must be finite and positive')
     if args.command != 'judge' and (args.samples <= 0 or args.max_tokens is not None and args.max_tokens <= 0):
         raise ValueError('samples and token limits must be positive')
     if args.command in ('plans', 'workflows') and args.plan_max_tokens <= 0:
         raise ValueError('plan-max-tokens must be positive')
+    if args.command != 'judge':
+        if args.max_tool_rounds <= 0:
+            raise ValueError('max_tool_rounds must be positive')
+        if args.openrouter_shell:
+            from .tools import openrouter_shell
+            args.shell_runtime_sha256 = hashlib.sha256(Path(openrouter_shell.__file__).read_bytes()).hexdigest()
     registry = registry or ModelRegistry.from_yaml_file(args.config)
     if args.judge_model:
         registry.get(args.judge_model)
@@ -470,6 +557,8 @@ async def run(args: argparse.Namespace, registry: ModelRegistry | None = None) -
         raise ValueError('judge requires --judge-model')
     store = RunStore(args.output_dir)
     try:
+        if getattr(args, 'retry_failed', False) and store.manifest is None:
+            raise ValueError('--retry-failed requires an existing managed run')
         if args.command == 'judge' and not args.results:
             if store.manifest is None:
                 raise ValueError('No run manifest; use --results to import existing completions')
@@ -501,7 +590,11 @@ async def run(args: argparse.Namespace, registry: ModelRegistry | None = None) -
                     raise ValueError('Input IDs must be unique')
             model = args.model if args.command == 'model' else 'theo-conductor'
             if args.command == 'model':
-                registry.get(model)
+                spec = registry.get(model)
+                if args.openrouter_shell and not spec.supports_tools:
+                    raise ValueError('Hosted shell requires a solver with supports_tools')
+            if args.command != 'judge' and args.openrouter_shell and args.command == 'model':
+                validate_client(spec.client)
             identity = {'mode': args.command, 'input_sha256': fingerprint(rows), 'model': model,
                         'planner': getattr(args, 'planner_model', None)}
             samples = 1 if args.command == 'judge' else args.samples
@@ -513,7 +606,7 @@ async def run(args: argparse.Namespace, registry: ModelRegistry | None = None) -
                     raise ValueError('--plans executes stored samples; generate additional plans to increase k')
                 samples = source_samples
             settings = {'config_sha256': hashlib.sha256(args.config.read_bytes()).hexdigest(),
-                        **{key: value for key, value in vars(args).items() if key not in {'config', 'output_dir', 'input', 'plans', 'results'} and not isinstance(value, Path)}}
+                        **{key: value for key, value in vars(args).items() if key not in {'config', 'output_dir', 'input', 'plans', 'results'} and not key.startswith('_') and not isinstance(value, Path)}}
             store.initialize(identity, settings, samples=samples)
             records = []
             for index, row in enumerate(rows):
@@ -549,30 +642,55 @@ async def run(args: argparse.Namespace, registry: ModelRegistry | None = None) -
                 raise ValueError('Plan generation requires --planner-model')
             registry.get(args.planner_model)
             template, model_ids = load_prompt_template(args.prompt_file)
+            if args.openrouter_shell:
+                start = template.find('## Available Worker Tools')
+                end = template.find('\n## ', start + 1)
+                if start < 0 or end < 0:
+                    raise ValueError('Hosted shell mode requires an Available Worker Tools prompt section')
+                template = template[:start] + ('## Available Worker Tools\n\n' + DESCRIPTION +
+                    'Resolve disagreements and preserve decisive corrections in final synthesis.\n') + template[end:]
             for model_id in model_ids:
-                registry.get(model_id)
+                worker = registry.get(model_id)
+                if args.openrouter_shell and args.command == 'workflows':
+                    validate_client(worker.client)
+                    if not worker.supports_tools:
+                        raise ValueError(f'Hosted shell requires supports_tools: {model_id}')
         semaphore = asyncio.Semaphore(args.concurrency)
 
-        async def process(record: dict) -> None:
+        async def process_body(record: dict) -> None:
             async with semaphore:
                 try:
-                    if template is not None:
-                        if not await generate_plan(record, store=store, registry=registry, planner=args.planner_model,
-                                                   template=template, model_ids=model_ids, args=args):
-                            return
-                    if args.command == 'workflows':
-                        if not record.get('plan') or record.get('plan_error'):
-                            raise ValueError(f"Plan unavailable: {record.get('plan_error')}")
-                        await execute_workflow(record, store=store, registry=registry, args=args)
-                    elif args.command == 'model':
-                        await generate_model(record, store=store, registry=registry, model=args.model, args=args)
-                    if args.judge_model and args.command != 'plans':
-                        await judge_completion(record, store=store, registry=registry, judge=args.judge_model, args=args)
+                    async with asyncio.timeout(getattr(args, 'workflow_timeout_seconds', None)):
+                        await process_item(record)
                 except Exception as exc:
-                    record.update(status='failed', error=f'{type(exc).__name__}: {exc}')
+                    for pending in record.get('in_flight_requests', {}).values():
+                        record['attempt_history'].append({**pending, 'usage': None,
+                            'failure_reason': 'workflow_timeout' if isinstance(exc, TimeoutError) else 'interrupted_request'})
+                    record['in_flight_requests'] = {}
+                    if record.get('status') == 'completed' and record.get('response'):
+                        clear_judge(record)
+                        record.update(judge_model=args.judge_model,
+                                      judge_error=f'{type(exc).__name__}: item deadline exceeded')
+                    else:
+                        record.update(status='failed', error=f'{type(exc).__name__}: {exc}')
                     store.save(record)
                 print(f"[{args.command}] {record['example_id']} sample={record['sample_index']}: {record['status']}", file=sys.stderr)
-        tasks = [asyncio.create_task(process(record)) for record in records]
+
+        async def process_item(record: dict) -> None:
+            if template is not None:
+                if not await generate_plan(record, store=store, registry=registry, planner=args.planner_model,
+                                           template=template, model_ids=model_ids, args=args):
+                    return
+            if args.command == 'workflows':
+                if not record.get('plan') or record.get('plan_error'):
+                    raise ValueError(f"Plan unavailable: {record.get('plan_error')}")
+                await execute_workflow(record, store=store, registry=registry, args=args)
+            elif args.command == 'model':
+                await generate_model(record, store=store, registry=registry, model=args.model, args=args)
+            if args.judge_model and args.command != 'plans':
+                await judge_completion(record, store=store, registry=registry, judge=args.judge_model, args=args)
+        tasks = [asyncio.create_task(process_body(record)) for record in records
+                 if not (getattr(args, 'retry_failed', False) and record.get('status') == 'completed')]
         try:
             await asyncio.gather(*tasks)
         finally:

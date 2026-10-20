@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1100" viewBox="0 0 1800 1100" role="img">
-<title>Conductor vs Fable 5.1 · HLE-Diamond-Physics</title>
+<title>Conductor vs Fable 5.1 (high) · HLE-Diamond-Physics</title>
 <rect width="1800" height="1100" fill="white"/>
 <g font-family="Arial, sans-serif" fill="#282d36">
-<text x="55" y="55" text-anchor="start" font-size="32" fill="#282d36" font-weight="bold">Conductor vs Fable 5.1 · HLE-Diamond-Physics</text>
+<text x="55" y="55" text-anchor="start" font-size="32" fill="#282d36" font-weight="bold">Conductor vs Fable 5.1 (high) · HLE-Diamond-Physics</text>
 <text x="55" y="91" text-anchor="start" font-size="18" fill="#566071" font-weight="normal">61 paired questions · 4 independent samples per question</text>
 <text x="450" y="140" text-anchor="middle" font-size="26" fill="#566071" font-weight="bold">mean@4</text>
 <circle cx="450" cy="495" r="68.75" fill="none" stroke="#dbe1eb"/>
@@ -91,7 +91,7 @@
 <circle cx="175.0" cy="495.00000000000006" r="3.5" fill="#ca603b"/>
 <circle cx="241.61263721436947" cy="374.6875" r="3.5" fill="#ca603b"/>
 <circle cx="381.24999999999994" cy="375.92150697963973" r="3.5" fill="#ca603b"/>
-<text x="450" y="939" text-anchor="middle" font-size="18" fill="#ca603b" font-weight="bold">Fable 5.1: 58.2%</text>
+<text x="450" y="939" text-anchor="middle" font-size="18" fill="#ca603b" font-weight="bold">Fable 5.1 (high): 58.2%</text>
 <text x="450" y="875" text-anchor="middle" font-size="15" fill="#566071" font-weight="normal">Overall</text>
 <text x="1350" y="140" text-anchor="middle" font-size="26" fill="#566071" font-weight="bold">pass@4</text>
 <circle cx="1350" cy="495" r="68.75" fill="none" stroke="#dbe1eb"/>
@@ -180,7 +180,7 @@
 <circle cx="1075.0" cy="495.00000000000006" r="3.5" fill="#ca603b"/>
 <circle cx="1111.8430139592795" cy="357.5" r="3.5" fill="#ca603b"/>
 <circle cx="1281.25" cy="375.92150697963973" r="3.5" fill="#ca603b"/>
-<text x="1350" y="939" text-anchor="middle" font-size="18" fill="#ca603b" font-weight="bold">Fable 5.1: 73.8%</text>
+<text x="1350" y="939" text-anchor="middle" font-size="18" fill="#ca603b" font-weight="bold">Fable 5.1 (high): 73.8%</text>
 <text x="1350" y="875" text-anchor="middle" font-size="15" fill="#566071" font-weight="normal">Overall</text>
 <text x="900" y="1000" text-anchor="middle" font-size="16" fill="#566071" font-weight="normal">mean@4: average sample accuracy. pass@4: probability of at least one correct answer in k samples.</text>
 <text x="900" y="1028" text-anchor="middle" font-size="14" fill="#566071" font-weight="normal">Shared 0–100% scale; paired question cohort; category counts denote unique questions.</text>

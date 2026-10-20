@@ -97,6 +97,15 @@ def test_create_task_generates_and_parses_workflow():
     assert model_id_schema == {"type": "string", "enum": ["planner"]}
 
 
+def test_create_task_defaults_to_configured_conductor():
+    client = ConductorClient()
+    registry = ModelRegistry([ModelSpec(model_idx='other', client=object()),
+                              ModelSpec(model_idx='planner', client=client)], conductor_model='planner')
+    task = asyncio.run(create_task('Question', registry, None))
+    assert task.workflow[0].model_id == 'planner'
+    assert len(client.calls) == 1
+
+
 def test_main_reports_missing_task(capsys):
     assert main(["does-not-exist.json"]) == 1
     assert "error:" in capsys.readouterr().err

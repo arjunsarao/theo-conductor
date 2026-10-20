@@ -76,6 +76,21 @@ model's output limit in the configuration. Changed requests invalidate affected
 steps and their descendants. Plans reuse only when the planner, prompt, inputs,
 and generation parameters match.
 
+For a recovery that must leave completed workflow slots untouched even if their
+cache fingerprints differ, add `--retry-failed` to the original `workflows`
+command. It skips completed slots
+before planning, execution and judging. Run `judge` separately for any completed
+answers that still need grading.
+
+Use `--request-timeout-seconds` for a hard elapsed deadline per model request
+(including hosted shell execution), and `--workflow-timeout-seconds` for a hard
+deadline per item across planning, retries and judging, excluding queue time.
+For example, `--request-timeout-seconds 1800 --workflow-timeout-seconds 7200`
+bounds each request to 30 minutes and each item to two hours. These limits are
+optional; successful checkpoints survive timeouts. Usage unavailable after a
+timeout remains unknown, and cancelling a local request does not guarantee
+that provider execution or billing stops immediately.
+
 You can increase `--samples` in an existing question-input run to add independent
 samples without repeating completed samples. Execution from `--plans` preserves
 the samples already present in the source file. Use a new output directory for
@@ -127,6 +142,26 @@ sbatch scripts/evaluate.sbatch workflows \
   --input questions.jsonl --config configs/worker_pool_frontier.yaml \
   --planner-model gpt-6.1-sol --samples 4 --output-dir outputs/full-run
 ```
+
+## PRLBench comparison
+
+Benchmark Fugu Ultra v2 and the GPT-6.1 Sol conductor on all 100 PRLBench
+paper-level task bundles, with **four independent attempts per paper per system**,
+Gemini 3.8 Flash criterion judging, and the same OpenRouter hosted shell with
+networking disabled:
+
+```bash
+.venv/bin/python -m theo_conductor.prlbench_comparison prepare \
+  --output-dir outputs/prlbench-fugu-vs-conductor-m4-openrouter
+.venv/bin/python -m theo_conductor.prlbench_comparison run \
+  --output-dir outputs/prlbench-fugu-vs-conductor-m4-openrouter
+```
+
+The report includes mean@4, pass@4, raw criterion scores and subfield metrics.
+An attempt passes at 70% criterion satisfaction. Public criterion weights are
+unavailable, so the raw score uses a disclosed equal-weight adaptation.
+See [the PRLBench guide](docs/prlbench.md) for interpreter isolation and limits,
+Slurm launching, provenance, resume and judge-only recovery.
 
 ## Radar comparisons
 
@@ -183,6 +218,26 @@ The accompanying `<prefix>-radar-metrics.json` records source paths and
 hashes, paired question IDs, denominators, per-category/overall metrics,
 generation failures, and comparison limitations. These are comparisons of the
 saved configured systems; equal k does not establish matched compute budgets.
+
+## FrontierScience track comparisons
+
+`theo-bars` creates a grouped-bar comparison of Conductor and Fugu Ultra v2 on
+FrontierScience-physics, with Research and Olympiad groups and mean@k/pass@k
+bars. It reads the saved results and track metadata, uses the same paired-cohort
+and failure policies as the radar charts, and retains original source rows,
+including repeated question texts. The default k is all independent samples.
+
+```bash
+.venv/bin/python -m theo_conductor.grouped_bars \
+  --comparison-root outputs/frontierscience-physics-fugu-vs-conductor-m4-20261003 \
+  --png
+```
+
+The chart and its JSON metrics/provenance file are saved in `figures/` by
+default; `--output-dir` changes the destination. SVG generation needs no extra
+dependencies. Optional `--png` also exports a PNG using installed ImageMagick
+(`convert`). Research correctness uses the run's recorded rubric verdicts;
+Olympiad uses its recorded short-answer verdicts. No new model calls are made.
 
 ## Training traces
 
@@ -744,7 +799,4 @@ benchmark-specific overrides. Its default output directory is
 
 # TODO
 
-- Add bigger models (120B class models)
-- Add term to penalize overly sequential workflows.
-
-Compare the breakdown
+- Add 6.1 as a fallback whenever a model reaches its max output length.

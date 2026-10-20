@@ -116,7 +116,7 @@ def test_frontier_config_contains_requested_openrouter_models_and_pricing():
         "gpt-6.1-sol": 32_768,
         "claude-opus-5.5": 65_536,
         "gemini-3.7-flash": 12_288,
-        "glm-5.3": 131_072,
+        "glm-5.3": 943_718,
         "kimi-k3": 943_718,
         "deepseek-v4-pro": 393_216,
         "grok-4.6": 24_576,
